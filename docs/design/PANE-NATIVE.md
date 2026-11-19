@@ -626,3 +626,37 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 ### 在飞
 
 - **P2 起手胶囊**：规格 `TASK-P2.md`，面板已写完 +58 行但卡在「点击后聚焦」细节上超时，未提交。下一轮要么让它收口提交，要么砍掉聚焦要求（`setDraft` 后由用户点一下就够）。
+
+---
+
+## 21. 面板改为「分叉当前对话」，目录输入彻底删除（2026-11-19 17:55）
+
+**主人的两句话定了设计**：「目前 btw 还会需要选择目录，给我直接改为默认当前工作区目录设计」→「btw 直接就是 fork 对话，然后开始新对话」。
+
+旧实现（§12）是「guide 胶囊 → 启动页 → 填目录 → 创建空白会话」。目录这一步被删掉，换成 DSH 原生 fork：
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| 入口 | 右栏「新会话面板」胶囊 / `⌥⌘J` / `/panechat` | 同一批入口，改名「分叉面板」 |
+| 中间步骤 | 填目录表单 + 点创建 | 无步骤，直接 fork 并替换 tab |
+| 目录 | 手填（默认当前会话 cwd） | 不询问，随 fork 继承源会话 cwd |
+| 上下文 | 空会话 | 源会话已完成轮次的完整上下文 |
+
+实现要点（只改 `client.js`，`index.js` 零改动）：
+
+1. `openContinuedPane(scope, sourceId, open)`：`sessions.fork({ sessionId, increaseTitle: true })` → `open(paneAddress(childId))`。fork 的 `meta.cwd` 由宿主从 `source.header.cwd` 复制（`dsh-api-session-controller/lib/index.js` 的 `fork()`），所以「默认当前工作区目录」是宿主保证，不是客户端猜的。
+2. 空白会话没有已完成轮次，宿主会拒 `session/fork-unavailable`；此时降级为 `sessions.create({ cwd: source.cwd })` —— 同目录的空白面板，仍然不问目录。
+3. **坑**：降级分支最初用 `const UNFORKABLE = new Set([...])` 判错误码，真机命中 `Cannot access 'UNFORKABLE' before initialization`（TDZ，HMR 换 bundle 后由旧组件回调触发）。改成会提升的函数声明 `isUnforkable(code)` 后消失。教训：**组件里能走到、但声明在函数体后段的常量，一律用函数声明兜住**。
+
+**真机验证**（`127.0.0.1:3081`，未重启宿主，HMR 自动换 bundle：rev `59bd0396a8f7` → `a2ae14628115`）：
+
+| 验收项 | 结果 |
+|---|---|
+| 右栏胶囊文案变「分叉面板」，无目录输入框 | ✅ |
+| 有历史的会话点胶囊 → tab 立即变「<原标题> (1)」，面板内是本会话完整历史 + 原生 composer | ✅ |
+| `⌥⌘J` → 再开一条「(2)」，同样带历史 | ✅ 快捷键走同一 `openContinuedPane` |
+| 空白会话兜底 → tab 变「新会话」空白面板，起手胶囊按 cwd 命中「看当前 diff」 | ✅ 走 `create({cwd})` 降级 |
+| 全程目录不被询问，fork 会话归到源会话同一工作区组 | ✅ |
+| 失败时面板显示错误 + 「重试」按钮 | ✅（TDZ 那次就是这个 UI 抓到的） |
+
+副作用（有意接受）：fork 出来的会话是**普通会话**，会出现在左侧会话列表里（原生 fork 语义如此），不再像旧子代理方案那样隐藏。测试产生的两条 fork 与一条空白会话已用 UI 归档。

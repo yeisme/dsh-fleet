@@ -900,6 +900,43 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /**
+     * Whether a fork refusal only means "this chat has no completed turn to
+     * carry over". Declared as a hoisted function (not a const) so the launch
+     * page can never observe it before initialization.
+     * @param code - RPC error code reported by the fork.
+     * @returns true when a fresh chat in the same directory is the right fallback.
+     */
+    function isUnforkable(code) {
+      return code === 'session/fork-unavailable' || code === 'session/not-found'
+    }
+
+    /**
+     * Open a panel that continues the owner's conversation. A native fork keeps
+     * the completed turns as context and inherits the workspace directory, so a
+     * side panel never asks for a directory. A chat with no completed turn has
+     * no prefix to fork; it degrades to a fresh chat in the same directory.
+     * @param scope - injected client scope carrying `sessions`.
+     * @param sourceId - the conversation to continue.
+     * @param open - receives the new panechat address.
+     * @param options - optional cancellation signal.
+     * @returns the new Session id.
+     */
+    async function openContinuedPane(scope, sourceId, open, { signal } = {}) {
+      signal?.throwIfAborted()
+      const source = scope.sessions.list.getSnapshot().byId[sourceId]
+      let id
+      try {
+        id = await scope.sessions.fork({ sessionId: sourceId, increaseTitle: true })
+      } catch (error) {
+        if (!isUnforkable(error?.rpcError?.code) || typeof source?.cwd !== 'string') throw error
+        id = await scope.sessions.create({ cwd: source.cwd })
+      }
+      signal?.throwIfAborted()
+      open(paneAddress(id))
+      return id
+    }
+
     function registerPaneChat(ctx, statusText, paneCursors) {
       const t = (zh, en) => ctx.locale.resolveText({ zh, en })
       const workspaceText = ctx.locale.bind('workspace')
@@ -911,8 +948,8 @@ window.__ModuleLoader__.load({
         const label = workspaceText(key)
         return label === key ? fallback : label
       }
-      const startTitle = () => t('新会话面板', 'New chat panel')
-      const description = () => t('选目录，开一个带原生输入框的面板', 'Choose a directory and open a chat panel')
+      const startTitle = () => t('分叉面板', 'Fork panel')
+      const description = () => t('把这边的对话分叉到右栏新面板，目录沿用当前工作区', 'Fork this chat into a new panel in the same directory')
       const failureText = (error) => String(error?.message ?? error)
 
       const CSS = `
@@ -1097,36 +1134,38 @@ window.__ModuleLoader__.load({
       })
 
       ctx.inject(['remote'], (scope) => {
-        function PaneStart({ sessionId, useSessions, useTabInfo }) {
+        // The launch page is not a form any more: it continues the conversation
+        // it was opened from (native fork, same directory) and replaces itself
+        // with that panel. Nobody types a directory.
+        function PaneStart({ sessionId, useTabInfo }) {
           const { tab } = useTabInfo()
-          const sessionCwd = useSessions((state) => state.byId[sessionId]?.cwd) || '~'
-          const [cwd, setCwd] = useState(undefined)
-          const [creating, setCreating] = useState(false)
+          const [attempt, setAttempt] = useState(0)
           const [failure, setFailure] = useState('')
-          const directory = cwd ?? sessionCwd
 
-          async function submit(event) {
-            event.preventDefault()
-            if (creating || directory.trim() === '') return
-            setCreating(true)
+          useEffect(() => {
+            const controller = new AbortController()
             setFailure('')
-            try {
-              const id = await createPaneSession(scope, directory)
-              if (!tab.signal.aborted) tab.actions.openResource(paneAddress(id), { replaceTab: true })
-            } catch (error) {
-              if (!tab.signal.aborted) setFailure(failureText(error))
-            } finally {
-              if (!tab.signal.aborted) setCreating(false)
-            }
-          }
+            void (async () => {
+              try {
+                await openContinuedPane(scope, sessionId, (address) => {
+                  if (controller.signal.aborted || tab.signal.aborted) return
+                  tab.actions.openResource(address, { replaceTab: true })
+                }, { signal: controller.signal })
+              } catch (error) {
+                if (!controller.signal.aborted && !tab.signal.aborted) setFailure(failureText(error))
+              }
+            })()
+            return () => controller.abort()
+          }, [sessionId, attempt])
 
-          return h('form', { 'data-dsh-pane-start': '', onSubmit: submit, 'aria-busy': creating },
-            h('label', null, t('目录', 'Directory'),
-              h('input', { type: 'text', value: directory, required: true, disabled: creating,
-                onChange: (event) => setCwd(event.target.value) })),
-            h('button', { type: 'submit', disabled: creating || directory.trim() === '' },
-              creating ? t('正在创建…', 'Creating…') : t('创建', 'Create')),
-            failure && h('p', { role: 'alert', 'data-dsh-pane-error': '' }, failure))
+          if (failure === '') {
+            return h('div', { 'data-dsh-pane-start': '', 'aria-busy': true },
+              h('p', { role: 'status' }, t('正在分叉当前对话…', 'Forking this chat…')))
+          }
+          return h('div', { 'data-dsh-pane-start': '', 'aria-busy': false },
+            h('p', { role: 'alert', 'data-dsh-pane-error': '' }, failure),
+            h('button', { type: 'button', onClick: () => { setAttempt((value) => value + 1) } },
+              t('重试', 'Retry')))
         }
 
         scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
@@ -1137,11 +1176,18 @@ window.__ModuleLoader__.load({
 
       ctx.inject(['conversation', 'sidebarRight', 'remote'], (scope) => {
         const pending = new Set()
-        async function openFromCurrent(owner, cwd, noticeSession = owner) {
+        /**
+         * Fork one conversation into a new panel beside the owner chat, in the
+         * same directory as the source (no directory prompt anywhere).
+         * @param owner - the main Session mounted in the right Sidebar.
+         * @param sourceId - the conversation to continue.
+         * @param noticeSession - where a failure toast lands.
+         */
+        async function openContinuationFrom(owner, sourceId, noticeSession = owner) {
           if (scope.sidebarRight.mounted.getSnapshot() !== owner || pending.has(owner)) return
           pending.add(owner)
           try {
-            await openPane(scope, cwd, (address) => {
+            await openContinuedPane(scope, sourceId, (address) => {
               if (scope.sidebarRight.mounted.getSnapshot() !== owner) {
                 throw new Error(t('会话已创建，右栏已切换', 'Chat created, but the active sidebar has changed'))
               }
@@ -1164,8 +1210,7 @@ window.__ModuleLoader__.load({
             ui: { kind: 'action', run: ({ sessionId }) => {
               const owner = scope.sidebarRight.mounted.getSnapshot()
               if (owner === undefined) return
-              const cwd = scope.sessions.list.getSnapshot().byId[sessionId]?.cwd || '~'
-              void openFromCurrent(owner, cwd, sessionId)
+              void openContinuationFrom(owner, sessionId ?? owner, sessionId ?? owner)
             } },
           }), 'threads: /panechat')
         })
@@ -1176,7 +1221,7 @@ window.__ModuleLoader__.load({
             const register = (binding) => shortcuts.register({
               id: 'panechat.new',
               label: startTitle,
-              aliases: ['new pane', 'new chat panel'],
+              aliases: ['fork pane', 'fork chat panel'],
               defaults: {
                 'desktop:macos': binding, 'desktop:windows': binding, 'desktop:linux': binding,
                 'web:macos': binding, 'web:windows': binding,
@@ -1185,9 +1230,8 @@ window.__ModuleLoader__.load({
               modals: [],
               resolve: () => {
                 const owner = scope.sidebarRight.mounted.getSnapshot()
-                const cwd = owner === undefined ? undefined : scope.sessions.list.getSnapshot().byId[owner]?.cwd?.trim()
-                if (!cwd) return { status: 'blocked', reason: t('当前主会话没有可用目录', 'No directory for the current main chat') }
-                return { status: 'handled', run: () => { void openFromCurrent(owner, cwd) } }
+                if (owner === undefined) return { status: 'blocked', reason: t('先打开一个会话，再分叉面板', 'Open a chat first to fork it into a panel') }
+                return { status: 'handled', run: () => { void openContinuationFrom(owner, owner) } }
               },
             })
             const binding = { code: 'KeyJ', modifiers: ['primary', 'alt'] }
