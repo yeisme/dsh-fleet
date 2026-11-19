@@ -980,6 +980,7 @@ window.__ModuleLoader__.load({
             turns: Number.isFinite(row.turns) ? row.turns : 0,
             at: Number.isFinite(row.at) ? row.at : 0,
             expanded: row.expanded === true,
+            planMode: row.planMode === true,
           })
         }
       } catch { /* storage unavailable or unparsable: keep the in-memory registry */ }
@@ -1041,6 +1042,91 @@ window.__ModuleLoader__.load({
       return turns
     }
 
+    function planPlaceholder(value) {
+      if (typeof value !== 'string') return false
+      return value.includes('描述你的任务以生成计划')
+        || /describe your task.*(?:generate|make).*plan/i.test(value)
+    }
+
+    /**
+     * Read the small set of session/composer projections that can identify Plan
+     * mode. Keep this deliberately structural: a session title or transcript
+     * mentioning "plan" must not make the warning appear.
+     */
+    function planProjection(value, key = '', seen = new Set(), depth = 0) {
+      if (value === undefined || value === null || depth > 6) return undefined
+      if (typeof value === 'string') {
+        if (planPlaceholder(value)) return { available: true, plan: true }
+        if (/mode|phase/i.test(key)) return { available: true, plan: /plan|planning|计划/i.test(value) }
+        return undefined
+      }
+      if (typeof value === 'boolean') {
+        if (/plan/i.test(key)) return { available: true, plan: value }
+        return undefined
+      }
+      if (typeof value === 'number') {
+        if (/badge/i.test(key)) return { available: true, plan: value > 0 }
+        return undefined
+      }
+      if (typeof value !== 'object') return undefined
+      if (seen.has(value)) return undefined
+      seen.add(value)
+      const keyIsPlan = /plan/i.test(key)
+      const keyIsPlaceholder = /placeholder/i.test(key)
+      const keyIsMode = /mode|phase/i.test(key)
+      let available = keyIsPlan || keyIsPlaceholder || keyIsMode
+      let plan = false
+      if (keyIsPlan && typeof value === 'object' && value !== null) {
+        if (value.enabled === true || value.active === true || value.value === true) plan = true
+      }
+      for (const name of Object.keys(value).slice(0, 100)) {
+        const result = planProjection(value[name], name, seen, depth + 1)
+        if (result === undefined) continue
+        available = true
+        plan = plan || result.plan
+      }
+      return available ? { available: true, plan } : undefined
+    }
+
+    function projectionSnapshot(value) {
+      if (value === undefined || value === null) return undefined
+      try {
+        return typeof value.getSnapshot === 'function' ? value.getSnapshot() : value
+      } catch {
+        return undefined
+      }
+    }
+
+    /** @returns Plan mode, false for a known non-Plan projection, or undefined when unavailable. */
+    function inspectPlanMode(deps, sessionId, reference) {
+      let binding
+      try { binding = reference?.binding ?? deps.sessions.binding(sessionId) } catch { binding = undefined }
+      const candidates = [binding?.session]
+      try {
+        const sessionScope = binding?.ctx ?? deps.sessions.scope?.(sessionId)
+        const input = sessionScope === undefined ? undefined : deps.conversation?.input?.for(sessionScope)
+        candidates.push(input)
+      } catch { /* an unretained session may have no composer projection yet */ }
+      for (const candidate of candidates) {
+        const result = planProjection(projectionSnapshot(candidate))
+        if (result?.available) return result.plan
+      }
+      return undefined
+    }
+
+    async function forkPlanMode(deps, childId, sourceId, signal) {
+      let result = inspectPlanMode(deps, childId)
+      if (result === undefined && typeof deps.sessions.using === 'function') {
+        try {
+          await deps.sessions.using(childId, { source: 'paneChat', signal }, (reference) => {
+            result = inspectPlanMode(deps, childId, reference)
+          })
+        } catch { /* fall back to the source projection below */ }
+      }
+      if (result !== undefined) return result
+      return inspectPlanMode(deps, sourceId) ?? false
+    }
+
     /**
      * Explain why a fork panel could not take a pane of its own.
      * @param t - zh/en resolver of the calling scope.
@@ -1056,8 +1142,8 @@ window.__ModuleLoader__.load({
         return t('右栏已占满两个栏位，分叉已开在同一栏的新标签里',
           'The column already holds two panes: the fork opened as a tab here')
       }
-      return t('没能定位当前栏位，分叉已开在同一栏的新标签里',
-        'Could not place a new pane: the fork opened as a tab here')
+      return t('右栏未打开，分叉已开在同一栏的新标签里',
+        'The right sidebar is closed: the fork opened as a tab here')
     }
 
     /**
@@ -1086,10 +1172,12 @@ window.__ModuleLoader__.load({
       }
       signal?.throwIfAborted()
       if (forked) {
+        const planMode = await forkPlanMode(deps, id, sourceId, signal)
         rememberFork(id, {
           parentId: sourceId,
           title: source?.displayTitle ?? source?.title ?? '',
           turns,
+          planMode,
           at: Date.now(),
         })
       }
@@ -1108,7 +1196,7 @@ window.__ModuleLoader__.load({
      */
     async function openForkPaneBeside(deps, sourceId, { signal, anchor } = {}) {
       const { sidebarRight } = deps
-      const target = sidebarRight.focusedTarget?.(anchor ?? null) ?? sidebarRight.commandTarget?.(anchor ?? null)
+      const target = sidebarRight.focusedTarget(anchor ?? null) ?? sidebarRight.commandTarget(anchor ?? null) ?? sidebarRight.active()
       const live = target !== undefined && sidebarRight.isTargetCurrent(target) ? target : undefined
       const block = live === undefined ? 'stale' : sidebarRight.splitBlock(live)
       const { id } = await continueConversation(deps, sourceId, { signal })
@@ -1161,6 +1249,14 @@ window.__ModuleLoader__.load({
    The transcript slot itself is display:contents, so its own children carry the box. */
 [data-dsh-fork="folded"] [data-conversation-scroll] > :first-child,
 [data-dsh-fork="folded"] [data-conversation-scroll] > :first-child > *{display:none;}
+[data-dsh-fork-planwarn]{display:flex;flex:none;align-items:flex-start;gap:8px;padding:9px 12px;
+  border-bottom:1px solid var(--dsw-alias-border-l1);background:rgba(255,196,0,.12);color:var(--dsw-alias-label-primary);
+  font-size:12px;line-height:1.4;}
+[data-dsh-fork-planwarn] span{flex:1;min-width:0;}
+[data-dsh-fork-planwarn] button{flex:none;padding:3px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;
+  background:transparent;color:inherit;font:inherit;cursor:pointer;white-space:nowrap;}
+[data-dsh-fork-planwarn] button:hover{background:rgba(255,196,0,.16);}
+[data-dsh-fork-planwarn] button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;}
 [data-dsh-fork-card]{display:flex;flex:none;flex-wrap:wrap;align-items:flex-start;gap:8px 10px;padding:9px 12px;
   border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);}
 [data-dsh-fork-card-main]{display:flex;flex:1 1 11rem;flex-direction:column;gap:3px;min-width:0;}
@@ -1324,23 +1420,31 @@ window.__ModuleLoader__.load({
             ? t(`带入 ${record.turns} 轮对话`, `${record.turns} turns carried over`)
             : t('已带入上下文', 'context carried over')
           const meta = folded ? `${turns} · ${t('历史已收起', 'history folded')}` : `${turns} · ${t('历史已展开', 'history shown')}`
-          return h('div', { 'data-dsh-fork-card': '' },
-            h(ForkGlyph, {}),
-            h('div', { 'data-dsh-fork-card-main': '' },
-              h('p', { 'data-dsh-fork-card-title': '', title: source },
-                t(`接续自《${source}》`, `Continued from “${source}”`)),
-              h('p', { 'data-dsh-fork-card-meta': '' }, meta)),
-            h('div', { 'data-dsh-fork-card-actions': '' },
-              h('button', {
-                type: 'button',
-                'data-dsh-fork-action': '',
-                onClick: onToggle,
-              }, folded ? t('展开历史', 'Show history') : t('收起历史', 'Fold history')),
-              record.parentId === '' ? null : h('button', {
-                type: 'button',
-                'data-dsh-fork-action': '',
-                onClick: onOpenSource,
-              }, t('跳回原对话', 'Open original'))))
+          const planWarning = record.planMode === true && record.parentId !== ''
+            ? h('div', { 'data-dsh-fork-planwarn': '', role: 'status' },
+              h('span', null, t('源会话在计划模式，此面板会先出计划；要直接回答请先退出计划模式',
+                'The source chat is in Plan mode, so this panel will plan first; exit Plan mode in the original chat to answer directly')),
+              h('button', { type: 'button', onClick: onOpenSource }, t('跳回原对话', 'Back to original')))
+            : null
+          return h(React.Fragment, null,
+            planWarning,
+            h('div', { 'data-dsh-fork-card': '' },
+              h(ForkGlyph, {}),
+              h('div', { 'data-dsh-fork-card-main': '' },
+                h('p', { 'data-dsh-fork-card-title': '', title: source },
+                  t(`接续自《${source}》`, `Continued from “${source}”`)),
+                h('p', { 'data-dsh-fork-card-meta': '' }, meta)),
+              h('div', { 'data-dsh-fork-card-actions': '' },
+                h('button', {
+                  type: 'button',
+                  'data-dsh-fork-action': '',
+                  onClick: onToggle,
+                }, folded ? t('展开历史', 'Show history') : t('收起历史', 'Fold history')),
+                record.parentId === '' ? null : h('button', {
+                  type: 'button',
+                  'data-dsh-fork-action': '',
+                  onClick: onOpenSource,
+                }, t('跳回原对话', 'Open original')))))
         }
 
         function PaneChatTab({ sessionId, useResource, useTabInfo, SessionProvider, renderSlot }) {
@@ -1398,7 +1502,8 @@ window.__ModuleLoader__.load({
             const record = paneId === undefined ? undefined : forkOf(paneId)
             if (record === undefined || record.parentId === '') return
             try {
-              scope.get('uiWorkspace')?.openSession?.(record.parentId)
+              const uiWorkspace = scope.get('uiWorkspace')
+              uiWorkspace?.openSession?.(record.parentId)
             } catch { /* navigation is an affordance, never a failure of the panel */ }
           }
 
@@ -1542,10 +1647,28 @@ window.__ModuleLoader__.load({
          * @param noticeSession - where a failure or hint toast lands.
          * @param anchor - the element that asked, for pane targeting.
          */
-        async function openContinuationFrom(owner, sourceId, noticeSession = owner, anchor) {
+        function openExistingFork(sourceId) {
+          let tabs
+          try { tabs = scope.sidebarRight.openTabs.getSnapshot() } catch { return false }
+          if (!Array.isArray(tabs)) return false
+          const tab = tabs.find((entry) => {
+            if (entry.kind !== 'panechat') return false
+            const childId = parsePaneAddress(entry.contentId)
+            return childId !== undefined && forkOf(childId)?.parentId === sourceId
+          })
+          if (tab === undefined) return false
+          try {
+            scope.sidebarRight.openResource(tab.contentId, { revealIfOpened: true })
+            return true
+          } catch { return false }
+        }
+
+        async function openContinuationFrom(owner, sourceId, noticeSession = owner, anchor, { force = false } = {}) {
           if (scope.sidebarRight.mounted.getSnapshot() !== owner || pending.has(owner)) return
+          if (!force && openExistingFork(sourceId)) return
           pending.add(owner)
           try {
+            if (!force && openExistingFork(sourceId)) return
             const result = await openForkPaneBeside(scope, sourceId, { anchor })
             if (result.block !== undefined) {
               const actx = scope.sessions.scope(noticeSession)
@@ -1560,49 +1683,66 @@ window.__ModuleLoader__.load({
         }
 
         scope.inject(['commandUi'], (commands) => {
-          commands.effect(() => commands.commandUi.register({
-            name: 'panechat',
-            label: startTitle,
-            description,
-            available: () => scope.sidebarRight.mounted.getSnapshot() !== undefined,
-            ui: { kind: 'action', run: ({ sessionId }) => {
+          commands.effect(() => {
+            const register = (name, label, run) => commands.commandUi.register({
+              name,
+              label,
+              description,
+              available: () => scope.sidebarRight.mounted.getSnapshot() !== undefined,
+              ui: { kind: 'action', run },
+            })
+            const disposeNew = register('panechat', startTitle, ({ sessionId }) => {
               const owner = scope.sidebarRight.mounted.getSnapshot()
               if (owner === undefined) return
               void openContinuationFrom(owner, sessionId ?? owner, sessionId ?? owner)
-            } },
-          }), 'threads: /panechat')
+            })
+            const disposeBranch = register('panechat.branch', t('强制分叉面板', 'Force fork panel'), ({ sessionId }) => {
+              const owner = scope.sidebarRight.mounted.getSnapshot()
+              if (owner === undefined) return
+              void openContinuationFrom(owner, sessionId ?? owner, sessionId ?? owner, undefined, { force: true })
+            })
+            return () => { disposeNew(); disposeBranch() }
+          }, 'threads: /panechat commands')
         })
 
         scope.inject(['shortcuts'], (keyboard) => {
           keyboard.effect(() => {
             const shortcuts = keyboard.shortcuts
-            const register = (binding) => shortcuts.register({
-              id: 'panechat.new',
-              label: startTitle,
-              aliases: ['fork pane', 'fork chat panel'],
-              defaults: {
-                'desktop:macos': binding, 'desktop:windows': binding, 'desktop:linux': binding,
-                'web:macos': binding, 'web:windows': binding,
-              },
-              regions: ['page', 'editable', 'terminal'],
-              modals: [],
-              resolve: () => {
-                const owner = scope.sidebarRight.mounted.getSnapshot()
-                if (owner === undefined) return { status: 'blocked', reason: t('先打开一个会话，再分叉面板', 'Open a chat first to fork it into a panel') }
-                return { status: 'handled', run: () => { void openContinuationFrom(owner, owner) } }
-              },
-            })
             const binding = { code: 'KeyJ', modifiers: ['primary', 'alt'] }
             const fallback = { ...binding, code: 'KeyU' }
-            const { issue, conflicts } = shortcuts.describeBinding(binding)
-            if (issue !== null || conflicts.length > 0) return register(fallback)
-            try {
-              return register(binding)
-            } catch (error) {
-              if (!failureText(error).startsWith('Conflicting shortcut defaults:')) throw error
-              return register(fallback)
+            const branchBinding = { ...binding, modifiers: ['primary', 'alt', 'shift'] }
+            const defaults = (value) => ({
+              'desktop:macos': value, 'desktop:windows': value, 'desktop:linux': value,
+              'web:macos': value, 'web:windows': value,
+            })
+            const register = (id, label, aliases, value, resolve) => shortcuts.register({
+              id, label, aliases, defaults: defaults(value),
+              regions: id === 'panechat.branch' ? ['page'] : ['page', 'editable', 'terminal'],
+              modals: [], resolve,
+            })
+            const resolve = (force) => () => {
+              const owner = scope.sidebarRight.mounted.getSnapshot()
+              if (owner === undefined) return { status: 'blocked', reason: t('先打开一个会话，再分叉面板', 'Open a chat first to fork it into a panel') }
+              return { status: 'handled', run: () => { void openContinuationFrom(owner, owner, owner, undefined, { force }) } }
             }
-          }, 'threads: new pane shortcut')
+            const tryRegister = (id, label, aliases, values, run) => {
+              for (const value of values) {
+                const { issue, conflicts } = shortcuts.describeBinding(value)
+                if (issue !== null || conflicts.length > 0) continue
+                try { return register(id, label, aliases, value, run) } catch (error) {
+                  if (!failureText(error).startsWith('Conflicting shortcut defaults:')) throw error
+                }
+              }
+              return undefined
+            }
+            // Reserve ⇧J for the explicit force action before ordinary new-pane
+            // fallbacks consider it. If it conflicts, the force action is command-only.
+            const disposeBranch = tryRegister('panechat.branch', t('强制分叉面板', 'Force fork panel'),
+              ['force fork pane', 'new fork panel'], [branchBinding], resolve(true))
+            const disposeNew = tryRegister('panechat.new', startTitle,
+              ['fork pane', 'fork chat panel'], [binding, fallback, branchBinding], resolve(false))
+            return () => { disposeNew?.(); disposeBranch?.() }
+          }, 'threads: panechat shortcuts')
         })
       })
     }
