@@ -539,3 +539,33 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 | P1 `⌘⌥A/Y` 跳待处理 | ⚠️ 逻辑在，但因三条待处理态不出而无可跳目标 |
 | HOST-1 六坑 + 删 `force` | ✅ 代码落地，等空闲窗口自动重启生效 |
 | 自动回归（V1/V2/V3） | ✅ 已挂常驻看护，重启后自动出报告 |
+
+---
+
+## 18. HOST-1 已在真宿主上验证通过（2026-11-19 15:13）
+
+宿主在 **14:17:44 重启**（pid 94843 → 38013，**不是**我挂的空闲看护干的，它当时还在守候），HOST-1 的 `index.js` 修复随之生效。
+
+回归结果（`post-restart-verify.py --now`，报告见 [`RESTART-REGRESSION.md`](RESTART-REGRESSION.md)）：
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| V1 `force` 后门已删 | ✅ | 对 `bound:true` 会话 POST `force:true` → **409 `attached-readonly`** |
+| V2 游标到顶后仍推送 | ✅ | 4000 条 fixture 初始 `after=4000`，追加 1 条 → SSE 推 **`after=4001`**（修前会永久静默） |
+| V3 只读边界 | ✅ | `threads=80`，`bound=80` |
+
+### 18.1 踩坑：curl 的 HttpOnly cookie 被当成注释跳过（两个脚本共有）
+
+自动回归第一次跑失败在「拿不到 cookie」，和今早 02:51 那次重启失败是**同一个原因**：
+
+- 鉴权 cookie 名是**动态的**（`dsh-auth-<实例随机后缀>`），且带 `HttpOnly`；
+- `curl -c` 把 HttpOnly cookie 写成以 **`#HttpOnly_`** 开头的行；
+- 两个脚本都写了 `if line.startswith("#"): continue` → **把真 cookie 当注释丢掉** → cookie 恒空。
+
+**修法**（已同步修进 `post-restart-verify.py` 与 `idle-restart.py`）：先剥 `#HttpOnly_` 前缀再解析，只有剩余以 `#` 开头的才当注释。
+
+**可复用教训**：凡是用 `curl -c` 换 cookie 再带 `cookie:` 头调本地 API 的脚本，先 `grep -c '^#HttpOnly_' jar` 确认自己没跳过它。
+
+### 18.2 空闲看护的收尾
+
+`idle-restart.py`（PID 5393）的使命是「把 HOST-1 送上线」，重启已发生，重启后它会在夜里再来一次、纯粹多打扰一次，已停掉。`post-restart-verify.py` 用完即退（`--now` 模式无残留）。
