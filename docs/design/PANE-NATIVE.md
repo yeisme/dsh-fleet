@@ -511,3 +511,31 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 **可复用结论**：`conversation.content` 的 embedded 变体只保证「渲染 + 原生输入」，**不保证宿主侧未读/注意力语义**；凡是「有没有新东西」的判断，面板必须自持游标，不能借宿主的 unread 位。
 
 已在 `TASK-P1.md` §6 立 P1b 修正规格（`097d160`）并派单。
+
+---
+
+## 17. P1b 结果（2026-11-19 14:05）：`ready` 仍未在真页面出现
+
+提交 `817f885 fix: 按面板焦点确认会话完成状态`（`completionUnread` 已彻底删掉，改自持 `lastSeenSeq` 游标，`client.js` +99/−71）。
+
+**浏览器复验（真页面，精确时序）**：
+
+1. 点 panechat tab → 点进 `[data-sidebar-right-panel] [contenteditable]` → 输入 → 回车 → 等「已完成」→ 切到另一个 tab → 查 `[data-dsh-pane-state]`
+2. 结果：**仍然是 `null`**（该 tab 的 `ready` 未出现；`running` 在采样中仍正常）
+
+**当前最可能的判断**（留给下一轮验证，不要再盲改）：`lastSeenSeq` 游标是在**面板体组件**里维护的（`client.js:315-332` 用 `tab.signal`/`cursor`），而 `tabCaption` 在**标题槽**里读同一个 Map。两者是同一槽树的不同渲染点，若 body 尚未挂载或先于 title 渲染，title 侧读到的游标就是 `undefined` → `ready` 条件（要求 `lastSeenSeq !== undefined`）恒假。
+
+**下一轮的正确做法**：把游标提升到模块级、以 `contentId` 为键**在 title 侧也能自愈初始化**（没有游标时先用「当前 turn/end seq」初始化，不要再要求非 undefined），或在宿主侧确认 title 槽能否拿到 `useTabInfo().tab.signal`。这一步值得先花 10 分钟读槽契约，而不是再改一版。
+
+### 状态盘点（14:05）
+
+| 项 | 状态 |
+|---|---|
+| P0-① 面板 + 原生会话 | ✅ 实测通过 |
+| P0-② `⌥⌘J` 开面板 + 自动聚焦 | ✅ 实测通过 |
+| P0-③ 只读动作条 + 接着问入草稿 | ✅ 实测通过 |
+| P1 `running` 点 + 活标题 | ✅ 实测通过 |
+| P1 `ready` / `blocked` / `waiting` 点 | ❌ 未出现（`ready` 已定位到标题槽拿不到游标） |
+| P1 `⌘⌥A/Y` 跳待处理 | ⚠️ 逻辑在，但因三条待处理态不出而无可跳目标 |
+| HOST-1 六坑 + 删 `force` | ✅ 代码落地，等空闲窗口自动重启生效 |
+| 自动回归（V1/V2/V3） | ✅ 已挂常驻看护，重启后自动出报告 |
