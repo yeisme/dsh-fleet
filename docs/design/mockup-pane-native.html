@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>面板即会话 · 交互样张</title>
+<style>
+  :root{
+    --bg:#fff; --panel:#f5f5f7; --panel2:#fbfbfd; --text:#1d1d1f; --muted:#6e6e73; --faint:#98989d;
+    --line:rgba(0,0,0,.12); --hair:.5px; --blue:#0A84FF; --blue-soft:rgba(10,132,255,.10);
+    --amber:#FF9F0A; --green:#30D158; --red:#FF453A; --glass:rgba(255,255,255,.72);
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#e9e9ec;color:var(--text);
+    font:400 13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+  .doc{max-width:1120px;margin:0 auto;padding:28px 24px 72px}
+  .doc h1{margin:0 0 4px;font-size:19px;font-weight:650;letter-spacing:-.01em}
+  .doc .sub{margin:0 0 18px;color:#5f5f66;font-size:12.5px}
+  .keyrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+  .keyrow b{font-weight:600}
+  .chipk{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:7px;
+    background:#fff;border:var(--hair) solid var(--line);font-size:12px;color:#3a3a3f}
+  .chipk code{font:11px var(--mono);color:var(--blue);background:var(--blue-soft);padding:1px 5px;border-radius:4px}
+
+  /* ---------- window frame ---------- */
+  .win{width:980px;max-width:100%;margin:0 0 28px;border-radius:12px;overflow:hidden;background:var(--bg);
+    box-shadow:0 0 0 .5px rgba(0,0,0,.14),0 18px 48px rgba(0,0,0,.16)}
+  .winbar{height:38px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--panel2);
+    border-bottom:var(--hair) solid var(--line)}
+  .dots{display:flex;gap:6px}
+  .dots i{width:11px;height:11px;border-radius:50%;display:block}
+  .dots i:nth-child(1){background:#ff5f57}.dots i:nth-child(2){background:#febc2e}.dots i:nth-child(3){background:#28c840}
+  .winbar .name{margin-left:8px;font-size:12px;color:var(--muted)}
+  .winbar .caption{margin-left:auto;font-size:11.5px;color:var(--faint)}
+  .body{display:flex;min-height:560px}
+
+  /* ---------- main area (blurred stand-in) ---------- */
+  .main{flex:1;min-width:0;padding:22px 24px;background:var(--bg);position:relative;overflow:hidden}
+  .main .ghost{opacity:.5}
+  .ghost h3{margin:0 0 10px;font-size:13px;font-weight:600}
+  .ghost p{margin:0 0 12px;font-size:12.5px;color:var(--muted);max-width:46ch}
+  .ghost .bubble{margin:0 0 12px auto;width:fit-content;max-width:78%;padding:9px 13px;border-radius:14px;
+    background:#f0f0f3;font-size:12.5px}
+  .ghost .line{height:9px;border-radius:3px;background:#f0f0f4;margin:0 0 8px}
+  .ghost .line.w70{width:70%}.ghost .line.w52{width:52%}.ghost .line.w86{width:86%}
+
+  /* ---------- right sidebar ---------- */
+  .side{width:472px;flex:none;border-left:var(--hair) solid var(--line);background:var(--panel);
+    display:flex;flex-direction:column;min-height:560px}
+
+  .strip{height:38px;display:flex;align-items:center;gap:2px;padding:0 6px;background:var(--panel2);
+    border-bottom:var(--hair) solid var(--line)}
+  .tab{display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-radius:6px;
+    font-size:12px;color:var(--muted);max-width:186px;white-space:nowrap;overflow:hidden}
+  .tab .ic{width:14px;height:14px;border-radius:4px;background:#c9c9cf;flex:none;display:grid;place-items:center;
+    font-size:9px;color:#fff}
+  .tab .ic.chat{background:linear-gradient(180deg,#7d7dff,#5a5ae0)}
+  .tab .ic.term{background:#2c2c2e;font-family:var(--mono);font-size:8px}
+  .tab .ic.ro{background:#c9c9cf}
+  .tab .label{overflow:hidden;text-overflow:ellipsis}
+  .tab .dot{width:6px;height:6px;border-radius:50%;flex:none}
+  .tab .x{color:var(--faint);font-size:12px;margin-left:2px}
+  .tab.on{background:var(--bg);color:var(--text);box-shadow:0 0 0 .5px rgba(0,0,0,.10),0 1px 2px rgba(0,0,0,.05)}
+  .strip .tools{margin-left:auto;display:flex;gap:2px;color:var(--muted);font-size:12px}
+  .strip .tools span{width:24px;height:22px;display:grid;place-items:center;border-radius:5px}
+  .strip .plus{width:24px;height:22px;display:grid;place-items:center;border-radius:5px;color:var(--muted);font-size:15px}
+
+  .sidebody{flex:1;display:flex;flex-direction:column;min-height:0}
+
+  /* ---------- guide (state 1) ---------- */
+  .guide{padding:18px 16px 14px;display:flex;flex-direction:column;gap:14px;height:100%}
+  .search{display:flex;align-items:center;gap:8px;height:34px;padding:0 11px;border-radius:9px;
+    background:var(--bg);border:var(--hair) solid var(--line);color:var(--muted);font-size:13px}
+  .search .mag{font-size:13px;color:var(--faint)}
+  .search .hint{margin-left:auto;font:11px var(--mono);color:var(--faint);border:var(--hair) solid var(--line);
+    padding:1px 5px;border-radius:4px}
+  .group{display:flex;flex-direction:column;gap:1px}
+  .group .gtitle{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--faint);
+    text-transform:uppercase;padding:0 8px 6px}
+  .row{display:flex;align-items:center;gap:10px;height:38px;padding:0 8px;border-radius:8px}
+  .row:hover,.row.sel{background:var(--bg);box-shadow:0 0 0 .5px rgba(0,0,0,.08)}
+  .row .ric{width:20px;height:20px;border-radius:6px;background:#e8e8ee;display:grid;place-items:center;
+    font-size:11px;color:#5f5f66;flex:none}
+  .row .ric.b{background:var(--blue);color:#fff}
+  .row .rt{min-width:0;flex:1}
+  .row .rt b{display:block;font-size:13px;font-weight:560;line-height:1.25}
+  .row .rt small{display:block;font-size:11.5px;color:var(--muted);line-height:1.3}
+  .row kbd{font:11px var(--mono);color:var(--faint);border:var(--hair) solid var(--line);
+    background:var(--panel2);padding:1px 5px;border-radius:4px}
+  .guide .foot{margin-top:auto;padding:10px 8px 0;border-top:var(--hair) solid var(--line);
+    font-size:11.5px;color:var(--faint);display:flex;gap:10px}
+  .guide .foot kbd{font:11px var(--mono);color:var(--muted)}
+
+  /* ---------- conversation (state 2/3) ---------- */
+  .conv{flex:1;display:flex;flex-direction:column;min-height:0;background:var(--bg)}
+  .convhead{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;
+    border-bottom:var(--hair) solid var(--line);font-size:11.5px;color:var(--muted)}
+  .convhead .who{color:var(--text);font-weight:560}
+  .convhead .path{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .convhead .right{margin-left:auto;display:flex;gap:8px;color:var(--faint)}
+  .stream{flex:1;overflow:hidden;padding:18px 16px 8px;display:flex;flex-direction:column;gap:14px}
+  .msg{max-width:86%}
+  .msg .role{font-size:11px;color:var(--faint);margin-bottom:4px}
+  .msg.user{margin-left:auto}
+  .msg.user .bubble{padding:9px 12px;border-radius:14px;background:#f0f0f3;font-size:13px}
+  .msg .txt{font-size:13px;line-height:1.55}
+  .msg .txt code{font:12px var(--mono);background:#f4f4f7;padding:1px 4px;border-radius:4px}
+  .steps{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
+  .steps .sq{width:9px;height:9px;border-radius:2px;background:#e3e3e8}
+  .steps .sq.done{background:var(--green)}
+  .steps .sq.live{background:var(--blue);animation:breathe 2s ease-in-out infinite}
+  @keyframes breathe{50%{opacity:.45}}
+  .toolcard{border:var(--hair) solid var(--line);border-radius:8px;padding:9px 11px;font-size:12px;
+    background:var(--panel2);color:var(--muted);display:flex;gap:8px;align-items:center}
+  .toolcard .tic{width:16px;height:16px;border-radius:4px;background:#e8e8ee;display:grid;place-items:center;
+    font-size:9px;color:#5f5f66;flex:none}
+  .toolcard code{font:11.5px var(--mono);color:var(--text)}
+
+  /* queue chip above composer */
+  .queue{align-self:center;display:flex;align-items:center;gap:8px;margin:0 16px 6px;padding:6px 10px;
+    border-radius:8px;background:var(--blue-soft);font-size:11.5px;color:#0a5fbf;max-width:100%}
+  .queue .qn{font:11px var(--mono);background:#fff;border-radius:4px;padding:0 4px;color:var(--blue)}
+
+  /* ---------- native composer stand-in ---------- */
+  .composer{margin:8px 12px 12px;border:var(--hair) solid var(--line);border-radius:12px;background:var(--bg);
+    box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .composer .ph{padding:13px 14px 6px;font-size:13px;color:var(--faint)}
+  .composer .ph.typing{color:var(--text)}
+  .composer .bar{display:flex;align-items:center;gap:6px;padding:6px 8px 8px}
+  .pill{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:6px;
+    border:var(--hair) solid var(--line);font-size:11.5px;color:var(--muted);background:var(--bg)}
+  .pill.on{color:var(--blue);border-color:rgba(10,132,255,.35);background:var(--blue-soft)}
+  .composer .send{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .composer .stop{width:26px;height:26px;border-radius:7px;border:var(--hair) solid var(--line);
+    display:grid;place-items:center;color:var(--muted);font-size:11px}
+  .composer .btn{height:26px;padding:0 12px;border-radius:7px;background:var(--blue);color:#fff;
+    font-size:12px;display:grid;place-items:center}
+  .composer .btn.muted{background:#c7c7cc}
+
+  /* hero variant */
+  .hero{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 22px;gap:16px}
+  .hero h2{margin:0;font-size:17px;font-weight:590;letter-spacing:-.01em}
+  .hero p{margin:0;font-size:12.5px;color:var(--muted);max-width:44ch}
+  .starters{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .starter{display:flex;align-items:center;gap:7px;height:32px;padding:0 11px;border-radius:8px;
+    border:var(--hair) solid var(--line);background:var(--bg);font-size:12px;color:var(--text)}
+  .starter .si{width:16px;height:16px;border-radius:4px;background:var(--blue-soft);display:grid;
+    place-items:center;font-size:9px;color:var(--blue)}
+
+  /* ---------- readonly (state 4) ---------- */
+  .rohead{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;
+    border-bottom:var(--hair) solid var(--line);font-size:11.5px;color:var(--muted)}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;
+    background:#ececf0;color:#5f5f66;font-size:11px}
+  .robody{flex:1;padding:18px 16px;display:flex;flex-direction:column;gap:14px;background:var(--bg);overflow:hidden}
+  .roactions{border-top:var(--hair) solid var(--line);padding:12px;display:flex;flex-direction:column;gap:8px;
+    background:var(--panel2)}
+  .roactions .hintline{font-size:11.5px;color:var(--muted)}
+  .roactions .btnrow{display:flex;gap:8px}
+  .roactions .act{flex:1;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    gap:6px;font-size:12.5px}
+  .roactions .act.primary{background:var(--blue);color:#fff}
+  .roactions .act.ghost{border:var(--hair) solid var(--line);background:var(--bg);color:var(--text)}
+  .roactions .note{font-size:11px;color:var(--faint);display:flex;gap:6px;align-items:center}
+  .noinput{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--faint);
+    border:1px dashed rgba(0,0,0,.16);border-radius:8px;padding:7px 9px;background:#fafafa}
+
+  .captionbar{display:flex;gap:10px;align-items:baseline;margin:0 0 8px;padding-left:2px}
+  .captionbar b{font-size:12.5px;font-weight:600}
+  .captionbar span{font-size:12px;color:#5f5f66}
+  body.slim .doc h1,body.slim .doc .sub,body.slim .doc .keyrow,body.slim .captionbar{display:none}
+  body.slim .doc{padding:0;max-width:none}
+  body.slim .win{margin:0;border-radius:0;box-shadow:none}
+  body.slim .winbar{display:none}
+  .state{display:none}
+  .state.show{display:block}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>面板即会话 · 交互样张 v1</h1>
+  <p class="sub">四张样片对应方案 §4（启动台）、§5.3（hero / active / readonly）。灰底为文档背景，白底为 DSH 窗口。</p>
+  <div class="keyrow">
+    <span class="chipk"><b>新建会话面板</b><code>⌘N</code></span>
+    <span class="chipk"><b>面板选单</b><code>⌘⇧N</code></span>
+    <span class="chipk"><b>跳下一个待处理</b><code>⌘⌥A</code></span>
+    <span class="chipk">沿用 <code>⌘\</code> 分屏 · <code>⌘⌥↵</code> 全屏 · <code>⌘W</code> 关闭</span>
+  </div>
+
+  <!-- ================= STATE 1: guide ================= -->
+  <section class="state" id="s1">
+    <div class="captionbar"><b>① 「+」启动台</b><span>接管右栏 guide 页：搜索 + 三组入口 + 键位常显，不弹第二个框</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i></i><i></i><i></i></div><div class="name">DSH — 工作区</div>
+        <div class="caption">127.0.0.1:3081</div></div>
+      <div class="body">
+        <div class="main ghost">
+          <h3>主区（背景）</h3>
+          <p>主区仍是你正在看的会话。右栏是它的附属面板集，按会话各自保存。</p>
+          <div class="bubble">感觉工作好慢，有必要安装 mobile-use 吗？</div>
+          <div class="line w86"></div><div class="line w70"></div><div class="line w52"></div>
+        </div>
+        <div class="side">
+          <div class="strip">
+            <div class="tab"><span class="ic term">&gt;_</span><span class="label">phone-run.sh</span></div>
+            <div class="tab on"><span class="ic chat">π</span><span class="label">新面板</span><span class="x">×</span></div>
+            <div class="strip tools"><span>◫</span><span>⛶</span></div>
+            <div class="plus">+</div>
+          </div>
+          <div class="sidebody">
+            <div class="guide">
+              <div class="search"><span class="mag">⌕</span><span>想开什么？</span><span class="hint">esc</span></div>
+
+              <div class="group">
+                <div class="gtitle">新建</div>
+                <div class="row sel">
+                  <span class="ric b">＋</span>
+                  <span class="rt"><b>新会话</b><small>~ /workspace/dsh-threads · 预设 daily</small></span>
+                  <kbd>⌘N</kbd>
+                </div>
+                <div class="row">
+                  <span class="ric">&gt;_</span>
+                  <span class="rt"><b>新终端</b><small>在当前会话目录打开</small></span>
+                  <kbd>⌘`</kbd>
+                </div>
+                <div class="row">
+                  <span class="ric">◫</span>
+                  <span class="rt"><b>新浏览器 tab</b><small></small></span>
+                  <kbd>⌘⌥T</kbd>
+                </div>
+              </div>
+
+              <div class="group">
+                <div class="gtitle">打开</div>
+                <div class="row">
+                  <span class="ric">◷</span>
+                  <span class="rt"><b>面板即会话 · 设计基线</b><small>dsh-threads · 3 分钟前</small></span>
+                </div>
+                <div class="row">
+                  <span class="ric">◷</span>
+                  <span class="rt"><b>手机 adb 无线调试</b><small>~ · 41 分钟前</small></span>
+                </div>
+              </div>
+
+              <div class="group">
+                <div class="gtitle">只读（外部会话）</div>
+                <div class="row">
+                  <span class="ric">⧉</span>
+                  <span class="rt"><b>phone-run.sh</b><small><span class="dot" style="display:inline-block;background:var(--blue);vertical-align:1px"></span> 运行中 · 17.0s · herdr 面板 · 只读</small></span>
+                </div>
+              </div>
+
+              <div class="foot"><span><kbd>↑↓</kbd> 选择</span><span><kbd>↵</kbd> 打开</span><span><kbd>esc</kbd> 关闭</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= STATE 2: hero ================= -->
+  <section class="state" id="s2">
+    <div class="captionbar"><b>② 新面板空态（hero）</b><span>原生 composer 自带：附件 / @引用 / 斜杠 / 模型 / 权限 / Plan</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i></i><i></i><i></i></div><div class="name">DSH — 工作区</div>
+        <div class="caption">⌘N 之后可直接打字</div></div>
+      <div class="body">
+        <div class="main ghost">
+          <h3>主区（背景）</h3>
+          <p>新面板出现即聚焦输入框，不需要再点一次。</p>
+          <div class="bubble">感觉工作好慢，有必要安装 mobile-use 吗？</div>
+          <div class="line w86"></div><div class="line w70"></div><div class="line w52"></div>
+        </div>
+        <div class="side">
+          <div class="strip">
+            <div class="tab"><span class="ic term">&gt;_</span><span class="label">phone-run.sh</span></div>
+            <div class="tab on"><span class="ic chat">π</span><span class="label">新会话</span><span class="x">×</span></div>
+            <div class="strip tools"><span>◫</span><span>⛶</span></div>
+            <div class="plus">+</div>
+          </div>
+          <div class="sidebody">
+            <div class="conv">
+              <div class="convhead"><span class="who">新会话</span><span class="path">~/workspace/dsh-threads</span>
+                <span class="right"><span>daily</span><span>Approve for me</span></span></div>
+              <div class="hero">
+                <h2>这个面板要做什么？</h2>
+                <p>它是一条真实的 DSH 会话：附件、引用、命令、模型与权限都和主页面一致。</p>
+                <div class="starters">
+                  <span class="starter"><span class="si">↺</span>接着上次的改动</span>
+                  <span class="starter"><span class="si">✓</span>跑一遍测试</span>
+                  <span class="starter"><span class="si">±</span>看当前 diff</span>
+                </div>
+              </div>
+              <div class="composer">
+                <div class="ph">描述任务，/ 命令，@ 引用文件…</div>
+                <div class="bar">
+                  <span class="pill">＋ 附件</span><span class="pill">@ 引用</span><span class="pill">/</span>
+                  <span class="pill on">Plan</span><span class="pill">daily ▾</span><span class="pill">Approve for me ▾</span>
+                  <span class="send"><span class="btn muted">发送</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= STATE 3: running ================= -->
+  <section class="state" id="s3">
+    <div class="captionbar"><b>③ 运行中</b><span>状态点四态挂在 tab 上；队列 chip 在 composer 上方；过程可折叠</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i></i><i></i><i></i></div><div class="name">DSH — 工作区</div>
+        <div class="caption">⌘⌥A 跳到下一个待处理</div></div>
+      <div class="body">
+        <div class="main ghost">
+          <h3>主区（背景）</h3>
+          <p>主区与面板各自独立会话；同一会话不会同时出现在两处。</p>
+          <div class="bubble">把 panechat 的资源协议补上</div>
+          <div class="line w86"></div><div class="line w70"></div><div class="line w52"></div>
+        </div>
+        <div class="side">
+          <div class="strip">
+            <div class="tab"><span class="ic term">&gt;_</span><span class="label">phone-run.sh</span></div>
+            <div class="tab"><span class="ic chat">π</span><span class="dot" style="background:var(--amber)"></span><span class="label">文档对齐</span></div>
+            <div class="tab on"><span class="ic chat">π</span><span class="dot" style="background:var(--blue)"></span><span class="label">资源协议</span><span class="x">×</span></div>
+            <div class="strip tools"><span>◫</span><span>⛶</span></div>
+            <div class="plus">+</div>
+          </div>
+          <div class="sidebody">
+            <div class="conv">
+              <div class="convhead"><span class="who">资源协议</span><span class="path">~/workspace/dsh-threads</span>
+                <span class="right"><span>12 步 · 1m12s</span></span></div>
+              <div class="stream">
+                <div class="msg user"><div class="bubble">把 panechat 的资源协议补上，别动 thread 那条只读路径</div></div>
+                <div class="steps"><span class="sq done"></span><span class="sq done"></span><span class="sq done"></span><span class="sq live"></span><span class="sq"></span><span>4 / 5 · 正在写入 client.js</span></div>
+                <div class="toolcard"><span class="tic">✎</span><code>client.js</code><span>+38 −12</span></div>
+                <div class="msg"><div class="role">助手</div><div class="txt">资源协议按 <code>subagentchat</code> 的范式实现：<code>sessions.retain</code> 之后包一层 <code>SessionProvider</code>，面板体直接渲染 <code>conversation.content</code> 的 embedded 变体。</div></div>
+                <div class="toolcard"><span class="tic">$</span><code>node --check client.js</code><span>通过</span></div>
+              </div>
+              <div class="queue"><span class="qn">⌘</span>排队 1 条：跑完把这版截图发我</div>
+              <div class="composer">
+                <div class="ph">回车排队 · ⌥回车插话</div>
+                <div class="bar">
+                  <span class="pill">＋ 附件</span><span class="pill">@ 引用</span><span class="pill">/</span>
+                  <span class="pill">daily ▾</span><span class="pill">danger-full-access ▾</span>
+                  <span class="send"><span class="stop">■</span><span class="btn">队列</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= STATE 4: readonly ================= -->
+  <section class="state" id="s4">
+    <div class="captionbar"><b>④ 只读线程</b><span>外部 herdr 面板的会话：没有输入框，只有动作条「接着问 → 新会话」</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i></i><i></i><i></i></div><div class="name">DSH — 工作区</div>
+        <div class="caption">只读不是 disabled，是不存在</div></div>
+      <div class="body">
+        <div class="main ghost">
+          <h3>主区（背景）</h3>
+          <p>外部进程仍持有这条会话的写权，DSH 只读它的 JSONL 增量。</p>
+          <div class="bubble">手机现在 ping 不通</div>
+          <div class="line w86"></div><div class="line w70"></div><div class="line w52"></div>
+        </div>
+        <div class="side">
+          <div class="strip">
+            <div class="tab on"><span class="ic ro">⧉</span><span class="dot" style="background:var(--blue)"></span><span class="label">phone-run.sh</span><span class="x">×</span></div>
+            <div class="tab"><span class="ic chat">π</span><span class="label">资源协议</span></div>
+            <div class="strip tools"><span>◫</span><span>⛶</span></div>
+            <div class="plus">+</div>
+          </div>
+          <div class="sidebody">
+            <div class="rohead"><span class="badge">⧉ 只读 · herdr 面板</span><span class="path" style="font-family:var(--mono);font-size:11px">~/.pi/sessions/…/01a1ed07.jsonl</span></div>
+            <div class="robody">
+              <div class="msg user"><div class="bubble">感觉工作好慢，有必要安装 mobile-use 吗？</div></div>
+              <div class="msg"><div class="role">推理过程</div><div class="txt">没必要仅因为「工作慢」就安装：<code>mobile-use</code> 主要用于让 AI 操作手机，不会加速代码阅读、修改或推理。</div></div>
+              <div class="steps"><span class="sq done"></span><span>17.0s · 2 条</span></div>
+            </div>
+            <div class="roactions">
+              <div class="noinput">该会话由外部终端持有，面板不提供输入框</div>
+              <div class="btnrow">
+                <span class="act primary">接着问 → 开新会话</span>
+                <span class="act ghost">复制上下文</span>
+              </div>
+              <div class="note">接着问会带上最近 20 条消息（超 8k 截断），在新会话里继续</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  if (q.get('slim')) document.body.classList.add('slim');
+  const want = q.get('s');
+  const all = [...document.querySelectorAll('.state')];
+  if (want) { all.forEach(el => el.classList.toggle('show', el.id === 's' + want)); }
+  else { all.forEach(el => el.classList.add('show')); }
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+- insert:
+    - id: threads
+      name: '@local/dsh-threads'

@@ -1,0 +1,1 @@
+{ "meta": { "title": "Attached threads", "description": "Read terminal-hosted agent sessions (pi, including herdr panes) inside the DSH Web UI, with fork and owned continuation.", "detail": "docs/DETAIL.md" } }

@@ -1,0 +1,1 @@
+{ "meta": { "title": "线程挂载", "description": "把终端里跑着的 agent 会话（pi / herdr 面板）读进 DSH Web UI，只读看历史、分叉继续、托管续写。", "detail": "docs/DETAIL.md" } }
