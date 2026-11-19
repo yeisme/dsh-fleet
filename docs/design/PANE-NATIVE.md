@@ -673,7 +673,7 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 |---|---|
 | `ISidebarRight.split(paneId?)` → 向右拆 docked pane，返回新 `PaneId` | 新面板能精确落在右侧 |
 | `ISidebarRight.splitBlock(target)` → `stale/collapsed/float/empty/budget/width` | 分栏被拒的六种原因可判定 |
-| 右栏最多 2 个 docked pane（`dockPaneIds(layout).length >= 2` → `budget`） | 第三次分叉必然退化 |
+| 右栏最多 2 个 docked pane（第三次分叉必然退化到 `budget`） | 2026-11-19 20:45 更正：原文写的 `dockPaneIds(layout)` **在宿主导出里不存在**，是行文时的想当然；判据以 `splitBlock()` 返回的 `'budget'` 为准（`dsh-client-ui-sidebar-right` 合同：`'stale' \| 'collapsed' \| 'float' \| 'empty' \| 'budget' \| 'width'`），真机实测满额时 `分栏` 按钮 disabled |
 | `openResource(address, {paneId})` 把 tab 落进指定 pane；不传 `replaceTab` 就不覆盖 | 「别在原来位置」由此实现 |
 | `splitBlock` 的 `width` 由视图层 `measureRoom` 上报（`fits.get(paneId)?.row !== false`） | 窄栏分不了栏 |
 
