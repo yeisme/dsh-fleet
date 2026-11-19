@@ -16,6 +16,7 @@ window.__ModuleLoader__.load({
     const PANECHAT_ID = '@local/dsh-threads/panechat'
     const PANE_START_ID = '@local/dsh-threads/panechat-start'
     const PANE_PREFIX = 'dsh-resource://panechat/session/'
+    const ATTENTION_ORDER = ['waiting', 'blocked', 'ready']
 
     /* ---------------------------------------------------------------- addresses */
 
@@ -67,6 +68,263 @@ window.__ModuleLoader__.load({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ key }),
       })
+    }
+
+    const EMPTY_THREAD = { meta: {}, messages: [], loaded: false, error: '', unread: false, ending: undefined }
+    const emptySnapshot = () => undefined
+    const emptySubscription = () => () => {}
+
+    // Both title and body share the same transcript and stream, even when the body is hidden.
+    function threadFeed(key) {
+      let state = EMPTY_THREAD
+      let stop
+      const listeners = new Set()
+      function publish(next) {
+        state = next
+        for (const listener of listeners) listener()
+      }
+      function update(data, initial = false) {
+        const incoming = Array.isArray(data.messages) ? data.messages : []
+        let { messages, ending, unread } = state
+        if (incoming.length > 0) {
+          if (initial) {
+            const ids = new Set(incoming.map(({ id }) => id))
+            messages = [...incoming, ...messages.filter(({ id }) => !ids.has(id))]
+          } else {
+            const ids = new Set(messages.map(({ id }) => id))
+            messages = [...messages, ...incoming.filter(({ id }) => !ids.has(id))]
+          }
+          ending = messages.findLast(({ role }) => role === 'user' || role === 'assistant')
+        }
+        const { title, cwd, source, running } = { ...state.meta, ...data }
+        const meta = { title, cwd, source, running }
+        const stopped = state.meta.running === true && meta.running === false
+        const completed = ending?.stopReason === 'stop' || ending?.stopReason === 'length'
+        if (meta.running || (ending !== state.ending && !completed)) unread = false
+        else if (!initial && state.loaded && completed && (stopped || ending.id !== state.ending?.id)) unread = true
+        publish({ meta, messages, ending, unread, loaded: initial || state.loaded, error: initial ? '' : state.error })
+      }
+      function start() {
+        let live = true
+        let liveRunning
+        void readMessages(key, 0).then((payload) => {
+          if (!live) return
+          if (payload?.ok !== true) throw new Error(payload?.reason ?? 'thread-read-failed')
+          update({ ...payload, running: liveRunning ?? payload.running }, true)
+        }).catch((error) => {
+          if (live) publish({ ...state, error: String(error?.message ?? error) })
+        })
+        const stream = new EventSource('/plugin/threads/stream?key=' + encodeURIComponent(key) + '&after=0')
+        const receive = (event) => {
+          if (!live) return
+          const data = JSON.parse(event.data)
+          liveRunning = data.running ?? liveRunning
+          update(data)
+        }
+        stream.addEventListener('ready', receive)
+        stream.addEventListener('append', receive)
+        return () => { live = false; stream.close() }
+      }
+      return {
+        getSnapshot: () => state,
+        subscribe(listener) {
+          listeners.add(listener)
+          if (listeners.size === 1) stop = start()
+          return () => {
+            listeners.delete(listener)
+            if (listeners.size !== 0) return
+            stop()
+            // A remount reconciles history by id, without turning the baseline into new activity.
+            state = { ...state, messages: [], loaded: false }
+          }
+        },
+        acknowledge() { if (state.unread) publish({ ...state, unread: false }) },
+      }
+    }
+
+    function threadAttention(state) {
+      if (state === undefined) return undefined
+      if (state.meta.running === true) return 'running'
+      if (state.ending?.stopReason === 'error') return 'blocked'
+      if (state.unread) return 'ready'
+      return undefined
+    }
+
+    const latestTurns = new WeakMap()
+
+    function latestTurnEvent(source) {
+      const snapshot = source.getSnapshot()
+      const prior = latestTurns.get(source)
+      if (prior?.revision === snapshot.revision) return prior.event
+      const isBoundary = ({ event }) => event.type === 'turn/start' || event.type === 'turn/end'
+      const { change, revision } = snapshot
+      let event
+      if (prior?.revision === revision - 1 && change.kind !== 'replace') {
+        event = change.kind === 'append' ? change.entries.findLast(isBoundary)?.event ?? prior.event : prior.event
+        if (event === undefined && change.kind === 'prepend') event = change.entries.findLast(isBoundary)?.event
+      } else {
+        event = snapshot.entries.findLast(isBoundary)?.event
+      }
+      latestTurns.set(source, { revision, event })
+      return event
+    }
+
+    function nativeAttention(status, summary, binding, seen) {
+      if (status?.pendingInteraction != null) return 'waiting'
+      const session = binding?.session.getSnapshot()
+      const running = status?.running ?? session?.running ?? summary?.running
+      const turn = binding && latestTurnEvent(binding.eventSource)
+      const reason = turn?.type === 'turn/end' ? turn.data.reason : undefined
+      if (session?.promptError != null || session?.lastAgentError != null
+        || (!running && (reason?.kind === 'error' || reason?.kind === 'interrupted'
+          || (reason?.kind === 'aborted' && reason.reason?.kind === 'hook'
+            && reason.reason.reason === 'deepseek-account/signed-out')))) return 'blocked'
+      if (status?.completionUnread && !seen && (reason === undefined || reason.kind === 'completed')) return 'ready'
+      if (running) return 'running'
+      return undefined
+    }
+
+    function activeCompletion(status, binding) {
+      if (!status?.completionUnread || binding === undefined) return undefined
+      const turn = latestTurnEvent(binding.eventSource)
+      return turn?.type === 'turn/end' ? turn.seq : undefined
+    }
+
+    function useObservable(source) {
+      // Bind the receiver: Session and event sources expose instance methods.
+      const subscribe = React.useCallback((listener) => source?.subscribe(listener) ?? emptySubscription(), [source])
+      const getSnapshot = React.useCallback(() => source?.getSnapshot(), [source])
+      return React.useSyncExternalStore(subscribe, getSnapshot)
+    }
+
+    function tabCaption(title, state, t) {
+      return h('span', { 'data-dsh-pane-title': '', title },
+        state && h('span', { 'data-dsh-pane-state': state, role: 'img', 'aria-label': t(state), title: t(state) }),
+        h('span', { 'data-dsh-pane-title-text': '' }, title))
+    }
+
+    function nextAttention(tabs, currentId, statusOf) {
+      const index = tabs.findIndex(({ id }) => id === currentId)
+      const ordered = [...tabs.slice(index + 1), ...tabs.slice(0, index + 1)]
+      const candidates = ordered.map((tab) => ({ tab, state: statusOf(tab) }))
+      for (const state of ATTENTION_ORDER) {
+        const next = candidates.find((candidate) => candidate.state === state && candidate.tab.id !== currentId)
+        if (next !== undefined) return next.tab
+      }
+      return candidates.find(({ state }) => ATTENTION_ORDER.includes(state))?.tab
+    }
+
+    function renderedTabControls(owner) {
+      const controls = new Map()
+      for (const element of document.querySelectorAll('[data-sidebar-right-tab]')) {
+        const control = element.closest('[data-dockkit-tab], [data-dockkit-float-title]')
+        if (control?.closest('[data-sidebar-right-session]')?.dataset.sidebarRightSession !== owner) continue
+        controls.set(element.dataset.sidebarRightTab, control)
+      }
+      return controls
+    }
+
+    function registerAttentionShortcut(ctx, t, seenCompletions, feeds) {
+      ctx.inject(['sidebarRight', 'shortcuts', 'uiSession'], (scope) => {
+        const { sidebarRight, shortcuts, uiSession, sessions } = scope
+        let notice, timer, focusFrame
+        const clearNotice = () => { clearTimeout(timer); notice?.remove(); notice = undefined }
+        function showNotice() {
+          clearNotice()
+          notice = document.createElement('div')
+          notice.setAttribute('data-dsh-pane-notice', '')
+          notice.setAttribute('role', 'status')
+          notice.textContent = t('noAttention')
+          document.body.appendChild(notice)
+          timer = setTimeout(clearNotice, 1500)
+        }
+
+        function resolve({ target }) {
+          const owner = sidebarRight.mounted.getSnapshot()
+          return { status: 'handled', run: () => {
+            cancelAnimationFrame(focusFrame)
+            if (sidebarRight.mounted.getSnapshot() !== owner) return
+            if (owner === undefined) return showNotice()
+            const controls = renderedTabControls(owner)
+            const committed = sidebarRight.tabsIn(owner)
+            const byId = new Map(committed.map((tab) => [tab.id, tab]))
+            const firstChat = new Map()
+            for (const { id, kind, contentId } of committed) {
+              if (kind === 'panechat' && !firstChat.has(contentId)) firstChat.set(contentId, id)
+            }
+            const ids = new Set([...controls.keys(), ...byId.keys()])
+            const tabs = Array.from(ids, (id) => byId.get(id)).filter(Boolean)
+            const current = sidebarRight.focusedTarget(target)?.tabId ?? sidebarRight.active()?.id
+            const statuses = uiSession.sessionStatus.getSnapshot()
+            const summaries = sessions.list.getSnapshot().byId
+            const next = nextAttention(tabs, current, ({ id: tabId, kind, contentId }) => {
+              if (kind === 'thread') return threadAttention(feeds.get(parseThreadAddress(contentId))?.getSnapshot())
+              if (kind !== 'panechat') return undefined
+              const id = parsePaneAddress(contentId)
+              if (id === undefined || id === owner || firstChat.get(contentId) !== tabId) return undefined
+              const binding = sessions.binding(id)
+              const status = statuses.get(id)
+              return nativeAttention(status, summaries[id], binding, seenCompletions.has(binding, activeCompletion(status, binding)))
+            })
+            if (next === undefined) return showNotice()
+            clearNotice()
+            // The host focuses both the tab and its pane; expanding then reveals a docked target.
+            sidebarRight.focus(next.id)
+            if (!sidebarRight.isExpanded() && sidebarRight.commandTarget(null)?.tabId === next.id) sidebarRight.toggleExpanded()
+            focusFrame = requestAnimationFrame(() => {
+              if (sidebarRight.mounted.getSnapshot() !== owner || sidebarRight.active()?.id !== next.id
+                || sidebarRight.focusedTarget()?.tabId === next.id) return
+              const control = renderedTabControls(owner).get(next.id)
+              const destination = control?.matches('[data-dockkit-float-title]')
+                ? control.closest('[data-dockkit-float]') : control
+              destination?.focus({ preventScroll: true })
+            })
+          } }
+        }
+
+        scope.effect(() => {
+          const primary = { code: 'KeyA', modifiers: ['primary', 'alt'] }
+          const fallback = { ...primary, code: 'KeyY' }
+          const register = (desktop) => shortcuts.register({
+            id: 'panechat.attention',
+            label: () => t('attention'),
+            aliases: ['next attention panel', 'next pending chat'],
+            // Web reserves the primary combination for session.archive.
+            defaults: { 'desktop:macos': desktop, 'desktop:windows': desktop, 'web:macos': fallback, 'web:windows': fallback },
+            regions: ['page', 'editable', 'terminal'],
+            modals: [],
+            resolve,
+          })
+          let desktop = primary
+          if (shortcuts.runtime === 'desktop' && shortcuts.platform !== 'linux') {
+            const { issue, conflicts } = shortcuts.describeBinding(primary)
+            if (issue !== null || conflicts.length > 0) desktop = fallback
+          }
+          let dispose
+          try { dispose = register(desktop) } catch (error) {
+            if (desktop === fallback || !String(error?.message ?? error).startsWith('Conflicting shortcut defaults:')) throw error
+            dispose = register(fallback)
+          }
+          return () => { cancelAnimationFrame(focusFrame); clearNotice(); dispose() }
+        }, 'threads: next attention panel')
+      })
+    }
+
+    function completionAcknowledgements() {
+      const seen = new WeakMap()
+      const listeners = new Set()
+      let revision = 0
+      return {
+        has: (binding, completion) => completion !== undefined && seen.get(binding) === completion,
+        acknowledge(binding, completion) {
+          if (seen.get(binding) === completion) return
+          seen.set(binding, completion)
+          revision++
+          for (const listener of listeners) listener()
+        },
+        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
+        getSnapshot: () => revision,
+      }
     }
 
     function threadContext(messages) {
@@ -161,6 +419,11 @@ window.__ModuleLoader__.load({
         session: '磁盘会话',
         side: '侧线',
         running: '运行中',
+        waiting: '等你',
+        blocked: '卡住',
+        ready: '就绪',
+        attention: '跳到下一个待处理面板',
+        noAttention: '没有待处理的面板',
       },
       en: {
         pane: 'Threads',
@@ -181,6 +444,11 @@ window.__ModuleLoader__.load({
         session: 'on disk',
         side: 'side',
         running: 'running',
+        waiting: 'Needs input',
+        blocked: 'Blocked',
+        ready: 'Ready',
+        attention: 'Go to the next panel needing attention',
+        noAttention: 'No panels need attention',
       },
     }
 
@@ -226,6 +494,16 @@ window.__ModuleLoader__.load({
 [data-dsh-thread-row]:hover{background:var(--dsw-alias-bg-layer-2);}
 [data-dsh-thread-row] span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
 [data-dsh-thread-row] span:last-child{color:var(--dsw-alias-label-secondary);font-size:11px;flex:none;}
+[data-dsh-pane-title]{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;}
+[data-dsh-pane-title-text]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+[data-dsh-pane-state]{width:6px;height:6px;flex:0 0 6px;border-radius:50%;}
+[data-dsh-pane-state="waiting"]{background:#FF9F0A;}
+[data-dsh-pane-state="blocked"]{background:#FF453A;}
+[data-dsh-pane-state="ready"]{background:#30D158;}
+[data-dsh-pane-state="running"]{background:#0A84FF;}
+@media (prefers-reduced-motion:no-preference){[data-dsh-pane-state="running"]{animation:dsh-pane-pulse 2s ease-in-out infinite;}}
+@keyframes dsh-pane-pulse{50%{opacity:.45;}}
+[data-dsh-pane-notice]{position:fixed;inset:auto 16px 16px auto;z-index:1000;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);pointer-events:none;}
 `
 
     /* -------------------------------------------------------------------- plugin */
@@ -245,9 +523,26 @@ window.__ModuleLoader__.load({
 
         /** Right-column controller, captured once the service exists. */
         let sidebarRight
+        const feeds = new Map()
+        function useThread(key) {
+          const feed = React.useMemo(() => {
+            if (key === undefined) return undefined
+            if (!feeds.has(key)) feeds.set(key, threadFeed(key))
+            return feeds.get(key)
+          }, [key])
+          const state = React.useSyncExternalStore(feed?.subscribe ?? emptySubscription, feed?.getSnapshot ?? emptySnapshot)
+          return { feed, state: state ?? EMPTY_THREAD }
+        }
+
         ctx.inject(['sidebarRight'], (scope) => {
           sidebarRight = scope.sidebarRight
           scope.effect(() => () => { sidebarRight = undefined }, 'threads: sidebar handle')
+          const { openTabs } = scope.sidebarRight
+          scope.effect(() => openTabs.subscribe(() => {
+            const keys = new Set(openTabs.getSnapshot().filter(({ kind }) => kind === 'thread')
+              .map(({ contentId }) => parseThreadAddress(contentId)))
+            for (const key of feeds.keys()) if (!keys.has(key)) feeds.delete(key)
+          }), 'threads: prune closed thread status')
         })
 
         let openFollowUp
@@ -261,59 +556,18 @@ window.__ModuleLoader__.load({
         function ThreadPane(props) {
           const tab = props.useTabInfo().tab
           const key = parseThreadAddress(tab.contentId)
+          const { feed, state: { meta, messages, loaded, error } } = useThread(key)
           const [threads, setThreads] = useState([])
           const [listOpen, setListOpen] = useState(false)
-          const [meta, setMeta] = useState({ title: '', source: '', running: false, cwd: '' })
-          const [messages, setMessages] = useState([])
           const [notice, setNotice] = useState('')
           const [failure, setFailure] = useState('')
           const [opening, setOpening] = useState(false)
-          const [loaded, setLoaded] = useState(false)
           const scrollRef = useRef(null)
           const stickRef = useRef(true)
           const copyTimer = useRef(undefined)
 
           useEffect(() => () => clearTimeout(copyTimer.current), [])
-
-          // Initial read plus the live stream.
-          useEffect(() => {
-            if (key === undefined) return undefined
-            let closed = false
-            setLoaded(false)
-            setMessages([])
-            void readMessages(key, 0).then((payload) => {
-              if (closed) return
-              if (payload?.ok !== true) throw new Error(payload?.reason ?? 'thread-read-failed')
-              setMeta({ title: payload.title ?? '', source: payload.source ?? '', running: payload.running === true, cwd: payload.cwd ?? '' })
-              const initial = payload.messages ?? []
-              const ids = new Set(initial.map((message) => message.id))
-              setMessages((previous) => [...initial, ...previous.filter((message) => !ids.has(message.id))])
-              setLoaded(true)
-            }).catch((error) => {
-              if (!closed) setFailure(String(error?.message ?? error))
-            })
-            const source = new EventSource(`/plugin/threads/stream?key=${encodeURIComponent(key)}&after=0`)
-            source.addEventListener('ready', (event) => {
-              const data = JSON.parse(event.data)
-              setMeta({ title: data.title ?? '', source: data.source ?? '', running: data.running === true, cwd: data.cwd ?? '' })
-            })
-            source.addEventListener('append', (event) => {
-              const data = JSON.parse(event.data)
-              if (Array.isArray(data.messages) && data.messages.length > 0) {
-                setMessages((previous) => {
-                  const seen = new Set(previous.map((message) => message.id))
-                  const added = data.messages.filter((message) => !seen.has(message.id))
-                  return added.length === 0 ? previous : [...previous, ...added]
-                })
-              }
-              setMeta((previous) => ({ ...previous, running: data.running === true }))
-            })
-            source.onerror = () => { /* reconnect is automatic */ }
-            return () => {
-              closed = true
-              source.close()
-            }
-          }, [key])
+          useEffect(() => { if (tab.visible) feed?.acknowledge() }, [feed, tab.visible, messages, meta.running])
 
           // Keep the transcript pinned unless the reader scrolled up.
           useEffect(() => {
@@ -385,7 +639,7 @@ window.__ModuleLoader__.load({
 
           return h('div', { 'data-dsh-thread': '', style: { position: 'relative' } },
             h('div', { 'data-dsh-thread-head': '' },
-              h('div', { 'data-dsh-thread-title': '', title: meta.cwd }, meta.title === '' ? t('pane') : meta.title),
+              h('div', { 'data-dsh-thread-title': '', title: meta.cwd }, meta.title || t('pane')),
               h('span', { 'data-dsh-thread-badge': '', 'data-tone': meta.running ? 'run' : '' },
                 ['⧉ ' + t('readonly'), source, ...(meta.running ? [t('running')] : [])].join(' · ')),
               h('button', { type: 'button', 'data-dsh-thread-list-btn': '', onClick: loadList }, t('threads')),
@@ -415,7 +669,7 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', 'data-dsh-thread-action': '', disabled: !loaded,
                 onClick: () => { void copyContext() } }, t('copy')),
               h('button', { type: 'button', 'data-dsh-thread-action': '', onClick: () => { void doFork() } }, t('fork')),
-              failure !== '' && h('div', { role: 'alert', 'data-dsh-thread-error': '' }, t('error') + '：' + failure),
+              (failure || error) && h('div', { role: 'alert', 'data-dsh-thread-error': '' }, t('error') + '：' + (failure || error)),
               notice !== '' && h('div', { role: 'status', 'data-dsh-thread-notice': '' }, notice)))
         }
 
@@ -469,17 +723,8 @@ window.__ModuleLoader__.load({
         /** Live chip title: the thread's own name instead of the shared "线程". */
         function ThreadTitle(props) {
           const tab = props.useTabInfo().tab
-          const key = parseThreadAddress(tab.contentId)
-          const [title, setTitle] = useState('')
-          useEffect(() => {
-            if (key === undefined) return undefined
-            let live = true
-            void readMessages(key, 0).then((payload) => {
-              if (live && payload?.ok === true) setTitle(String(payload.title ?? ''))
-            })
-            return () => { live = false }
-          }, [key])
-          return h(React.Fragment, null, title === '' ? t('pane') : title)
+          const { state } = useThread(parseThreadAddress(tab.contentId))
+          return tabCaption('⧉ ' + (state.meta.title || tab.title || t('pane')), threadAttention(state), t)
         }
 
         ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
@@ -511,7 +756,9 @@ window.__ModuleLoader__.load({
           })()
         })
 
-        registerPaneChat(ctx)
+        const seenCompletions = completionAcknowledgements()
+        registerPaneChat(ctx, t, seenCompletions)
+        registerAttentionShortcut(ctx, t, seenCompletions, feeds)
       },
     }
 
@@ -574,9 +821,17 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function registerPaneChat(ctx) {
+    function registerPaneChat(ctx, statusText, seenCompletions) {
       const t = (zh, en) => ctx.locale.resolveText({ zh, en })
-      const title = () => t('会话', 'Chat')
+      const workspaceText = ctx.locale.bind('workspace')
+      function titleFor(summary, fallback) {
+        if (summary === undefined) return fallback
+        const key = summary.blank ? 'session.new' : 'session.untitled'
+        const stored = summary.blank ? '' : summary.title?.trim()
+        if (stored) return stored
+        const label = workspaceText(key)
+        return label === key ? fallback : label
+      }
       const startTitle = () => t('新会话面板', 'New chat panel')
       const description = () => t('选目录，开一个带原生输入框的面板', 'Choose a directory and open a chat panel')
       const failureText = (error) => String(error?.message ?? error)
@@ -641,7 +896,7 @@ window.__ModuleLoader__.load({
           patterns: [PANE_PREFIX + '**'],
           priority: 'extension',
           canOpen: (address) => parsePaneAddress(address) !== undefined,
-          title,
+          title: (address) => titleFor(scope.sessions.list.getSnapshot().byId[parsePaneAddress(address)], t('会话', 'Chat')),
         }), 'threads: panechat tab type')
         scope.effect(() => scope.sidebarRightTabs.register({
           id: PANE_START_ID,
@@ -673,7 +928,8 @@ window.__ModuleLoader__.load({
           } else if (resource.value.id === mainSessionId || (first !== undefined && first.tabId !== tab.id)) {
             content = h('p', { role: 'status' }, t('此会话已在其他位置打开', 'This chat is already open elsewhere'))
           } else {
-            content = h(SessionProvider, { session: resource.value.reference }, renderSlot('panechat.conversation', {}))
+            content = h(SessionProvider, { session: resource.value.reference },
+              renderSlot('panechat.conversation', { visible: tab.visible }))
           }
           return h('div', { 'data-dsh-pane-chat': '' }, content)
         }
@@ -683,9 +939,43 @@ window.__ModuleLoader__.load({
           key: PANECHAT_ID,
           children: { 'panechat.conversation': { kind: 'single', scope: 'session' } },
         }, PaneChatTab)), 'threads: panechat body')
+        function PaneTitle({ useResource, useSessionStatus, useSessions, useTabInfo }) {
+          const { tab } = useTabInfo()
+          const id = parsePaneAddress(tab.contentId)
+          const resource = useResource(tab.contentId)
+          const binding = resource.value === undefined ? undefined : scope.sessions.binding(id)
+          const summary = useSessions((list) => list.byId[id])
+          const status = useSessionStatus((statuses) => statuses.get(id))
+          useObservable(binding?.session)
+          useObservable(binding?.eventSource)
+          const completion = activeCompletion(status, binding)
+          useObservable(seenCompletions)
+          const seen = seenCompletions.has(binding, completion)
+          return tabCaption(titleFor(summary, tab.title), nativeAttention(status, summary, binding, seen), statusText)
+        }
+
+        function PaneConversationBody(props) {
+          const { sessionId, visible, useSessionStatus } = props
+          const binding = scope.sessions.binding(sessionId)
+          const status = useSessionStatus((statuses) => statuses.get(sessionId))
+          useObservable(binding?.eventSource)
+          const completion = activeCompletion(status, binding)
+          // The host acknowledges completions on main-view selection only.
+          // An embedded view keeps its own acknowledgement for that turn.
+          useEffect(() => {
+            if (!visible || completion === undefined) return
+            seenCompletions.acknowledge(binding, completion)
+          }, [sessionId, binding, visible, completion])
+          return PaneConversation(props)
+        }
+
+        scope.effect(() => scope.slots.inject('sidebar.right.pane.tab.title', () => scope.slots.register({
+          name: 'sidebar.right.pane.tab.title',
+          key: PANECHAT_ID,
+        }, PaneTitle)), 'threads: panechat title')
         scope.effect(() => scope.slots.inject('panechat.conversation', () => scope.slots.register({
           name: 'panechat.conversation',
-        }, PaneConversation)), 'threads: panechat conversation')
+        }, PaneConversationBody)), 'threads: panechat conversation')
       })
 
       ctx.inject(['remote'], (scope) => {
