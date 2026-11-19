@@ -8,6 +8,7 @@ window.__ModuleLoader__.load({
   id: '@local/dsh-threads',
   factory(require) {
     const React = require('react')
+    const { createPortal } = require('react-dom')
     const h = React.createElement
     const { useEffect, useRef, useState } = React
 
@@ -17,6 +18,12 @@ window.__ModuleLoader__.load({
     const PANE_START_ID = '@local/dsh-threads/panechat-start'
     const PANE_PREFIX = 'dsh-resource://panechat/session/'
     const ATTENTION_ORDER = ['waiting', 'blocked', 'ready']
+    const PaneChatSession = React.createContext(undefined)
+    const GENERIC_STARTERS = [
+      ['先看目录结构', '先看一下当前目录结构，告诉我这是什么项目。'],
+      ['找三个重点文件', '列出这个目录里最值得先看的三个文件。'],
+      ['找明显的坑', '有什么明显的坑？'],
+    ]
 
     /* ---------------------------------------------------------------- addresses */
 
@@ -509,6 +516,12 @@ window.__ModuleLoader__.load({
 @media (prefers-reduced-motion:no-preference){[data-dsh-pane-state="running"]{animation:dsh-pane-pulse 2s ease-in-out infinite;}}
 @keyframes dsh-pane-pulse{50%{opacity:.45;}}
 [data-dsh-pane-notice]{position:fixed;inset:auto 16px 16px auto;z-index:1000;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);pointer-events:none;}
+[data-dsh-pane-starter-seat]{width:100%;max-width:var(--dsh-composer-card-max-width);}
+[data-dsh-pane-starter-group]{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding-bottom:6px;}
+[data-dsh-pane-starter]{box-sizing:border-box;max-width:100%;height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;border:0.5px solid var(--dsw-alias-border-l1);border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer;}
+[data-dsh-pane-starter]:hover{background:rgba(10,132,255,.08);color:var(--dsw-alias-label-primary);}
+[data-dsh-pane-starter-icon]{width:14px;height:14px;flex:0 0 14px;border:1px solid currentColor;border-radius:3px;box-sizing:border-box;}
+@media (prefers-reduced-motion:reduce){[data-dsh-pane-starter]{transition:none;}}
 `
 
     /* -------------------------------------------------------------------- plugin */
@@ -790,11 +803,72 @@ window.__ModuleLoader__.load({
       return renderSlot('conversation.session', { view: 'chat' })
     }
 
-    function PaneConversation(props) {
+    function PaneConversation({ sessionId, renderFactorySlot }) {
       // Sessions created by directory are ungrouped; the Hero composer requires a Workspace.
-      return props.renderFactorySlot('conversation.content',
-        { variant: 'embedded', phase: 'active', hero: false },
-        { slots: { views: FixedPaneChatView } })
+      return h(PaneChatSession.Provider, { value: sessionId },
+        renderFactorySlot('conversation.content',
+          { variant: 'embedded', phase: 'active', hero: false },
+          { slots: { views: FixedPaneChatView } }))
+    }
+
+    function paneStarterEntries(files) {
+      const starters = []
+      if (files.some(({ name, type }) => name === 'package.json' && type === 'file')) {
+        starters.push(['跑一遍测试', '跑一遍测试，失败项贴出来并说明原因。'])
+      }
+      if (files.some(({ name, type }) => name === '.git' && (type === 'directory' || type === 'file'))) {
+        starters.push(['看当前 diff', '看一下当前未提交的 diff，指出风险最大的三处改动。'])
+      }
+      if (files.some(({ name, type }) => type === 'file' && name.startsWith('README'))) {
+        starters.push(['读 README 摘要', '读一遍 README，用 5 行说明这个项目做什么、怎么跑。'])
+      }
+      return starters.length === 0 ? GENERIC_STARTERS : starters
+    }
+
+    function PaneStarter({ scope, sessionId, cwd, inputActions }) {
+      const anchor = useRef(null)
+      const [seat, setSeat] = useState(null)
+      const [starters, setStarters] = useState(GENERIC_STARTERS)
+
+      React.useLayoutEffect(() => {
+        // The host mounts this slot below the card. Give only our row a seat above it.
+        const card = anchor.current?.closest('[data-composer-dock]')?.previousElementSibling
+        if (!card?.matches('[data-composer-card]')) return
+        const container = card.ownerDocument.createElement('div')
+        container.setAttribute('data-dsh-pane-starter-seat', '')
+        card.before(container)
+        setSeat(container)
+        return () => container.remove()
+      }, [])
+
+      useEffect(() => {
+        const workspaceFiles = scope.get('remote.workspaceFiles')
+        if (!cwd || typeof workspaceFiles?.list !== 'function') return
+        const controller = new AbortController()
+        const { signal } = controller
+        void (async () => {
+          try {
+            const result = await workspaceFiles.list(sessionId, '.', signal)
+            if (!signal.aborted && result.ok) setStarters(paneStarterEntries(result.value.entries))
+          } catch { /* keep the generic prompts when the directory is unavailable */ }
+        })()
+        return () => controller.abort()
+      }, [scope, sessionId, cwd])
+
+      function choose(text) {
+        const sessionScope = scope.sessions.scope(sessionId)
+        if (sessionScope === undefined) return
+        const input = scope.conversation.input.for(sessionScope)
+        inputActions.setDraft(text)
+        input.focus()
+      }
+
+      const buttons = h('div', { 'data-dsh-pane-starter-group': '', role: 'group', 'aria-label': '起手提示词' },
+        starters.map(([label, text]) => h('button', {
+          key: label, type: 'button', 'data-dsh-pane-starter': '', onClick: () => choose(text),
+        }, h('span', { 'data-dsh-pane-starter-icon': '', 'aria-hidden': 'true' }), label)))
+      return h(React.Fragment, null, h('span', { ref: anchor, hidden: true }),
+        seat === null ? buttons : createPortal(buttons, seat))
     }
 
     async function createPaneSession(scope, cwd) {
@@ -1000,6 +1074,26 @@ window.__ModuleLoader__.load({
         scope.effect(() => scope.slots.inject('panechat.conversation', () => scope.slots.register({
           name: 'panechat.conversation',
         }, PaneConversation)), 'threads: panechat conversation')
+      })
+
+      ctx.inject(['conversation'], (scope) => {
+        function BlankPaneStarter({ sessionId, useSession, useInput, useSessions, inputActions }) {
+          const session = useSession((value) => value)
+          const input = useInput((value) => value)
+          const cwd = useSessions((list) => list.byId[sessionId]?.cwd)
+          if (session?.openState !== 'open' || !session.blank || session.running || session.pendingSubmissions.length > 0
+            || input?.phase !== 'plain' || input.draft !== '' || input.attachmentIds.length > 0 || input.queue.length > 0) return null
+          return h(PaneStarter, { key: JSON.stringify([sessionId, cwd]), scope, sessionId, cwd, inputActions })
+        }
+
+        function PaneStarterSlot(props) {
+          const sessionId = React.useContext(PaneChatSession)
+          return sessionId !== undefined && sessionId === props.sessionId ? h(BlankPaneStarter, props) : null
+        }
+
+        scope.effect(() => scope.slots.inject('conversation.composer.dock', () => scope.slots.register({
+          name: 'conversation.composer.dock', id: 'panechat-starter', order: -10,
+        }, PaneStarterSlot)), 'threads: panechat starter capsules')
       })
 
       ctx.inject(['remote'], (scope) => {
