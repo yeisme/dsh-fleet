@@ -1724,7 +1724,14 @@ window.__ModuleLoader__.load({
               'web:macos': value, 'web:windows': value,
             })
             const register = (id, label, aliases, value, resolve) => shortcuts.register({
-              id, label, aliases, defaults: defaults(value),
+              id,
+              // Shortcut labels are call signatures too; a bare string here throws
+              // inside the registry and kills every later registration in this
+              // effect (symptom: entries silently missing from ⌘/ and a
+              // "command.label is not a function" crash from the locale subscriber).
+              label: typeof label === 'function' ? label : () => String(label ?? id),
+              aliases,
+              defaults: defaults(value),
               regions: id === 'panechat.branch' ? ['page'] : ['page', 'editable', 'terminal'],
               modals: [], resolve,
             })
