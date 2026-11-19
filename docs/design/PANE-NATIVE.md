@@ -368,3 +368,41 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 - guide 替换缝：`…/src/client/contract/slots.ts:84-89`；`tabs/guide/GuideBody.tsx` 头注释
 - 键位注册与占用：`…/src/client/shortcuts.ts:27-105`；`dsh-client-ui-sidebar-browser/src/client/index.ts:50-54`
 - 现状代码：`~/workspace/dsh-threads/client.js:413-446`、`index.js:278-320,514,539,569`、`docs/DETAIL.md:23-30`
+
+---
+
+## 12. 实证记录（P0-① 已落地，2026-11-19 12:44）
+
+代码提交 `6b3b039 feat: 新增 DSH 原生会话面板`（`client.js` +228 行，`package.json` 加 `dsh.client.inject` 两项；`index.js` 零改动）。
+
+**浏览器实测**（`127.0.0.1:3081`，未重启宿主）：
+
+| 验收项 | 结果 |
+|---|---|
+| 右栏 guide 出现新胶囊「新会话面板」 | ✅ |
+| 点胶囊 → 启动页（目录输入，默认取当前会话 cwd） | ✅ |
+| 点「创建」→ tab 变「会话」，面板内出现**原生 composer** | ✅ |
+| 原生能力：`/` 出命令菜单（文件/目标/计划…）、`@`、附件、权限档、模型选择、语音、发送 | ✅ |
+| 真发一轮：1 秒完成、回复「收到」、用量 29.4K tok、复制/反馈/分支/上下文视图全在 | ✅ |
+| 宿主是否需重启才能生效 | ❌ **不需要**：`dsh-client-hmr` 每 500ms stat 轮询 graph row 的 bundle，改完自动热替换；实测 combo rev 变为 `43da47067d4e`，`panechat` 命中 21 次 |
+
+证据截图：[`shots/verify-panechat.png`](shots/verify-panechat.png)
+
+### 12.1 本文档 §3.2 的四处 API 与真实签名不一致（以源码为准）
+
+| # | 我写的 | 真实签名 | 依据 |
+|---|---|---|---|
+| 1 | `useResource('panechat')(tab.contentId)` | `useResource(tab.contentId)`——协议由完整 URL 决定，不是「协议名 + 地址」两段式 | `dsh-client-resources/src/client/contract.ts:60` |
+| 2 | `sidebarRight.openResource(addr, { replaceTab: true })` | 全局 `openResource` 的 `replaceTab` 收 **TabId**；要在「启动页原位替换」，必须用 **tab action**：`tab.actions.openResource(addr, true)`——它绑定发起请求的那个 tab，异步创建完成时仍指向正确的 tab | `dsh-client-ui-sidebar-right/src/client/contract/slots.ts:146`、`service.ts:170` |
+| 3 | `ctx.commands.register(...)` | 客户端命令是 `ctx.commandUi.register({ name, available, ui: { kind:'action', run } })`；`ctx.commands` 是宿主命令路径 | `dsh-client-ui-commands/src/client/contract.ts:78`、`service.ts:489` |
+| 4 | 有空会话 `phase:'hero'` | **Hero 需要 Workspace 标签**，按目录创建的会话没有 Workspace → Hero 里输入框被禁用。面板必须固定 `phase:'active', hero:false` | `dsh-client-ui-conversation/src/client/skeleton/ConversationContent.tsx:142` |
+
+另两条实测事实（文档里没写、但实现必须知道）：
+
+- **会话快照没有 `cwd`**：目录要从 `useSessions(s => s.byId[sessionId]?.cwd)` 取；`sessions.create({cwd})` 省略 `sessionId` 时总是分配新 id（复用只发生在显式传 `sessionId` 时）。`~` 需用 `remote.$host.home` 展开。
+- **资源 provider 抛异常不会被资源服务兜住**：失败要以 `{ok:false,error:{code,message,details}}` 帧 yield 出去，否则面板只剩空白。恢复旧 tab 时若会话目录还在 `pending`，要先 `sessions.refresh()` 再 `retain`。
+
+### 12.2 P0-① 已实现但尚未验的两项（下一轮补）
+
+- 同一会话「已在别处打开」的守卫（代码里有：命中 `mounted` 或已有同 contentId 的 tab 时显示「此会话已在其他位置打开」），未做双开实测。
+- 拖图片进面板 composer 上传（原生能力，理论上免费，未实测）。
