@@ -21,31 +21,39 @@
 
 已实测可用（2026-11-19 18:5x，宿主 95094）：`⌥⌘J` 能建分叉并聚焦新面板 composer。
 
-## 2. DSH 已占用键位（机器提取，勿撞）
+## 2. DSH 真实占用表（`⌘/` 速查面板读出的权威清单，2026-11-19 21:0x）
 
-| 键位 | 归属 id | 包 |
-|---|---|---|
-| `⌘N` / `⌥⌘N` | 新建会话 | ui-workspace |
-| `⌘,` / `⌥⌘,` | `settings.open` | ui-settings-general |
-| `⌘/` | `shortcuts.open` | ui-shortcuts |
-| `⌘B` / `⌥⌘B` | `sidebar.left.toggle` | ui-layout |
-| `⌥⌘B` / `⌘⇧B` | `sidebar.right.toggle` | ui-sidebar-right |
-| `⌥⌘P` | `workspace.files` | ui-sidebar-files |
-| `⌘T` / `⌥⌘T` | `browser.new` | ui-sidebar-browser |
-| `⌃\`` | `terminal.new` | ui-sidebar-terminal |
-| `⌘⇧,` / `⌘⇧.` | 设置内的列表翻页/调序 | client-shortcuts |
-| `⌘\` | 右栏分栏（`sidebar.right`） | ui-sidebar-right |
-| `⌥⌘↵` | 右栏新面板（`sidebar.right`） | ui-sidebar-right |
-| `Esc` | `response.stop` / 审批拒绝 / 关闭浮层 | conversation、approval |
-| `⌘↵` | 发送（替代行为：排队发送） | conversation |
-| `↵` / `⇧↵` | 补全确认 / 换行 | conversation |
-| `⌘?` 家族 | 行内补全（`fixed.slash` / `fixed.mention` / `fixed.complementary`） | conversation |
-| `⇧⌘A` / `⌥⌘A` | 归档会话（会话右键菜单展示） | ui-workspace |
-| `⇧⌘F` | 分叉会话（原生 fork，会话右键菜单展示） | ui-workspace |
-| `⌥⌘O` / `⌘⇧O` | 在应用内打开（`open-in-app`） | ui-open-in-app |
-| `⌘P` | 工作区文件（部分平台） | ui-sidebar-files |
+> 这一版是**界面读出来的**，不是 grep 猜的。凡在此表出现的键，一律不得复用。
 
-> 说明：`⌘J` 未被 DSH 占用（Codex 里 `⌘J` 也是「侧对话」语义），但**单 ⌘ 层留给宿主**，本插件只用 `⌥⌘`。
+| 键位 | 动作 |
+|---|---|
+| `⌘/` | 快捷键速查 |
+| `⌥⌘N` | 新会话 |
+| `⌥⌘B` | 展开／收起左侧栏 |
+| `⌥⌘K` | **搜索会话** |
+| `⌥⌘O` | **添加工作区** |
+| `⌥⌘G` | **重命名会话** |
+| `⇧⌘F` | 分叉会话（原生） |
+| `⌥⌘A` | **归档会话** |
+| `⌥⌘,` | 打开设置 |
+| `⇧⌘O` | 在本地打开 |
+| `⇧⌘B` | 展开／收起右侧栏 |
+| `⌥⌘P` | 工作区文件 |
+| `⌃\`` | 新建终端 |
+| `⌘\` | 分栏 |
+| `⌥⌘↵` | 面板全屏／退出全屏 |
+| `⌥⌘W` | **关闭当前页面／窗口** |
+| `⇧⌘.` | 展开或收起 NodeJS 诊断 |
+| `⌥⌘Y` | 跳到下一个待处理面板 |
+| **`⌥⌘J`** | **分叉面板（本插件，已上线并出现在速查表内）** |
+| `⌘↵` | 互补的 Queue／Steer 发送 |
+| `↵` / `⇧↵` | 发送 / 换行 |
+| `/` / `@` | 命令菜单 / 引用菜单 |
+| `Esc` | 停止生成 / 关闭浮层 / 拒绝审批 |
+| `↑` `↓` `↵` | 菜单移动与确认 |
+
+**由此推翻的三个提案**：`⌥⌘K`（想给「跳回源会话」）→ 撞搜索会话；`⌥⌘O`（想给「打开 agents」）→ 撞添加工作区；`⌥⌘W`（想给「关分叉 tab」）→ 撞关闭页面/窗口。已在下表改掉。
+
 
 ## 3. Codex 对照（动作名取自 Codex CLI 0.170 二进制）
 
@@ -57,7 +65,7 @@
 | `close_sidebar_tab` | 关当前 tab | `⌥⌘W` | 新增（不占 `⌘W`） |
 | `sidebar_up` / `sidebar_down` | 上下移动游标 | `⌥⌘↑` / `⌥⌘↓` | 新增 |
 | `toggle_pane_zoom` | 单 pane 放大 | `⌥⌘F` | 新增（`⌘⇧F` 已被 fork 占用） |
-| `open_agents` | 打开 agent 面板/切换会话 | `⌥⌘O`→ 改为 `⌥⌘A`（agents） | 新增；`⌥⌘O` 已被 open-in-app 占用 |
+| `open_agents` | 打开 agent 面板/切换会话 | `⌥⌘⇧O` | `⌥⌘O` 是添加工作区、`⌥⌘A` 是归档会话、`⇧⌘O` 是在本地打开，只剩这个组合可用；P2 再说 |
 | `open_transcript` / `find_transcript` | 看/搜全文 | `⌥⌘T` | 新增（对齐右栏「轨迹」tab） |
 | `interrupt_turn` | 中断当前回合 | 沿用 `Esc` | 不新增 |
 | `edit_queued_message` | 编辑排队消息 | 沿用宿主能力 | 不新增 |
@@ -74,28 +82,31 @@
 
 | id | 动作 | macOS | Windows/Linux | 兜底链 | regions |
 |---|---|---|---|---|---|
-| `panechat.new` | 分叉当前对话（有则聚焦，无则新建） | `⌥⌘J` | `⌃⌥J` | `⌥⌘U` → `⌥⌘⇧J` | page, editable, terminal |
-| `panechat.newBranch` | 强制再开一条分叉（不聚焦旧的） | `⌥⌘⇧J` | `⌃⌥⇧J` | 无（可只在命令面板） | page |
-| `panechat.merge` | 把当前分叉的结论送回主线草稿（不自动发） | `⌥⌘L` | `⌃⌥L` | `⌥⌘I` | page |
-| `panechat.return` | 跳回源会话（分叉 → 主线） | `⌥⌘K` | `⌃⌥K` | — | page |
+| `panechat.new` | 分叉当前对话（已开则聚焦，无则新建） | `⌥⌘J` | `⌃⌥J` | `⌥⌘U` → `⌥⌘⇧J` | page, editable, terminal |
+| `panechat.branch` | 强制再开一条分叉（不动已开的） | `⌥⌘⇧J` | `⌃⌥⇧J` | 无（仅命令面板） | page |
+| `panechat.merge` | 最近一条分叉结论 → 主线草稿（不自动发） | `⌥⌘L` | `⌃⌥L` | `⌥⌘I` | page, editable |
+| `panechat.return` | 跳回源会话（分叉 → 主线） | `⌥⌘R` | `⌃⌥R` | 无 | page |
+
+> `⌥⌘K` 是搜索会话、`⌥⌘O` 是添加工作区，都不能用，故 return 落 `⌥⌘R`。
 
 ### 4.2 焦点与导航（P0）
 
 | id | 动作 | 键位 | 说明 |
 |---|---|---|---|
-| `pane.focusLeft` / `pane.focusRight` | 主线 ↔ 右栏分叉 互切 | `⌥⌘←` / `⌥⌘→` | 已在 DSH 有同类动作，先查 `describeBinding`，冲突则只保留「右栏内」层 |
+| `pane.focusLeft` / `pane.focusRight` | 主线 ↔ 右栏分叉 互切 | `⌥⌘←` / `⌥⌘→` | 速查表里无占用，实测注册时再跑一次 `describeBinding` 兜底 |
 | `pane.nextTab` / `pane.prevTab` | 右栏分叉 tab 上/下 | `⌥⌘↓` / `⌥⌘↑` | 对齐 Codex `sidebar_down/up` |
-| `pane.closeTab` | 关当前分叉 tab（会话保留） | `⌥⌘W` | 不删会话，只关面板 |
-| `pane.zoom` | 分叉面板占满右栏 | `⌥⌘F` | 对齐 `toggle_pane_zoom` |
+| `pane.closeTab` | 只关分叉面板、不归档会话 | `⌥⌘⌫` | `⌥⌘W` 已被「关闭页面/窗口」占用，让开 |
+| `pane.zoom` | 分叉面板占满右栏 | `⌥⌘F` | 已有 `⌥⌘↵` 是面板全屏（宿主级），本键是「单 pane 放大」，不重复 |
 
 ### 4.3 辅助（P1）
 
 | id | 动作 | 键位 | 备注 |
 |---|---|---|---|
-| `panechat.ask` | 选区 → 问 BTW（选中文本直接开分叉并预填） | `⌥⌘'`（单引号） | 与 Codex `/side` 的「随手问」对齐；也可只用浮动条不设键 |
-| `panechat.transcript` | 打开/收起分叉的历史折叠 | `⌥⌘H` | 折叠态默认收起，这个键是快速展开 |
-| `panechat.list` | 列出本会话所有分叉（命令面板式浮层） | `⌥⌘Y`（复用现有跳转，扩展为列表） | — |
-| `panechat.help` | BTW 键位速查浮层 | `⌥⌘/` | 内容从 `shortcuts.catalog` 生成，不手写 |
+| `panechat.ask` | 选区 → 问 BTW（开分叉并预填引用块） | `⌥⌘'` | 也可只用浮动条，不占键 |
+| `panechat.fold` | 展开/收起分叉历史 | `⌥⌘H` | 折叠态默认收起，此键快速展开 |
+| `panechat.list` | 分叉列表浮层 | 复用 `⌥⌘Y` | 不新增键：把「跳到下一个待处理」扩展成「待处理列表」，行为向后兼容 |
+| ~~`panechat.help`~~ | ~~键位速查~~ | 删掉 | `⌘/` 已是宿主的快捷键速查，本插件注册进去即可，不另造浮层 |
+
 
 ## 5. 注册实现要点（照现有模式写）
 
@@ -121,7 +132,9 @@
 | K5 | 焦点在终端 tab 时按 `⌥⌘←/→` 不被吞（导航键不进 terminal region） |
 | K6 | `⌥⌘W` 只关面板不归档会话（会话列表数量不变） |
 
-## 7. 待决策（需要你一句话）
+## 7. 已定 / 待定
 
-- `⌥⌘←/→` 与 DSH 自身是否已有右栏焦点键冲突，需要真机 `describeBinding` 跑一遍再定；若冲突，焦点组退化为 `⌥⌘⇧←/→`。
-- `⌥⌘⇧A`（权限档循环）默认不做：误切权限档的代价比便利大。
+- ✅ 已定：`⌥⌘J` 复用（已上线）、`⌥⌘⇧J` 强制另开、`⌥⌘L` 合流、`⌥⌘R` 跳回源会话、`⌥⌘↑↓` 切 tab、`⌥⌘←→` 切 pane、`⌥⌘H` 折叠、`⌥⌘'` 选区即问、`⌥⌘⌫` 只关面板。
+- ✅ 已否：`⌥⌘K/O/W`（真实占用）、`⌥⌘/` 自造速查（宿主 `⌘/` 已够）、权限档循环键（误切代价大）。
+- ⏳ 待真机：`⌥⌘←/→` 与 `⌥⌘⌫` 注册时的 `describeBinding` 结果；若报冲突，焦点组退 `⌥⌘⇧←/→`，关面板退 `⌥⌘⇧⌫`。
+- 说明：每条都要在注册前跑 `describeBinding` + 兜底链，**设计表定的是首选位，不是硬编码**。
