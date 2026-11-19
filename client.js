@@ -14,6 +14,9 @@ window.__ModuleLoader__.load({
 
     const TAB_ID = '@local/dsh-threads'
     const PREFIX = 'dsh-resource://thread/pi/'
+    const PANECHAT_ID = '@local/dsh-threads/panechat'
+    const PANE_START_ID = '@local/dsh-threads/panechat-start'
+    const PANE_PREFIX = 'dsh-resource://panechat/session/'
 
     /* ---------------------------------------------------------------- addresses */
 
@@ -537,7 +540,232 @@ window.__ModuleLoader__.load({
             }
           })()
         })
+
+        registerPaneChat(ctx)
       },
+    }
+
+    function paneAddress(id) {
+      return PANE_PREFIX + encodeURIComponent(id)
+    }
+
+    function parsePaneAddress(address) {
+      if (typeof address !== 'string' || !address.startsWith(PANE_PREFIX)) return undefined
+      try {
+        const id = decodeURIComponent(address.slice(PANE_PREFIX.length))
+        return id !== '' && paneAddress(id) === address ? id : undefined
+      } catch {
+        return undefined
+      }
+    }
+
+    function waitForAbort(signal) {
+      if (signal.aborted) return Promise.resolve()
+      return new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    }
+
+    function FixedPaneChatView({ renderSlot }) {
+      return renderSlot('conversation.session', { view: 'chat' })
+    }
+
+    function PaneConversation(props) {
+      // Sessions created by directory are ungrouped; the Hero composer requires a Workspace.
+      return props.renderFactorySlot('conversation.content',
+        { variant: 'embedded', phase: 'active', hero: false },
+        { slots: { views: FixedPaneChatView } })
+    }
+
+    function registerPaneChat(ctx) {
+      const t = (zh, en) => ctx.locale.resolveText({ zh, en })
+      const title = () => t('会话', 'Chat')
+      const startTitle = () => t('新会话面板', 'New chat panel')
+      const description = () => t('选目录，开一个带原生输入框的面板', 'Choose a directory and open a chat panel')
+      const failureText = (error) => String(error?.message ?? error)
+
+      const CSS = `
+[data-dsh-pane-chat]{display:flex;width:100%;height:100%;min-width:0;min-height:0;}
+[data-dsh-pane-start]{display:grid;align-content:start;gap:10px;width:100%;max-width:26rem;margin-inline:auto;padding:16px;box-sizing:border-box;}
+[data-dsh-pane-start] label{display:grid;gap:6px;min-width:0;}
+[data-dsh-pane-start] input,[data-dsh-pane-start] button{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:7px 10px;}
+[data-dsh-pane-start] button{justify-self:start;cursor:pointer;}
+[data-dsh-pane-start] button:disabled{opacity:.55;cursor:default;}
+[data-dsh-pane-error]{color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere;margin:0;}
+[data-dsh-pane-chat]>[role]{padding:12px;}
+`
+      ctx.effect(() => {
+        const style = document.createElement('style')
+        style.setAttribute('data-dsh-pane-styles', '')
+        style.textContent = CSS
+        document.head.appendChild(style)
+        return () => { style.remove() }
+      }, 'threads: panechat styles')
+
+      async function createPaneSession(scope, cwd) {
+        const directory = cwd.trim()
+        if (directory === '~' || directory.startsWith('~/')) {
+          const home = scope.remote.$host.home
+          if (home === undefined) throw new Error(t('宿主主目录尚不可用', 'The host home directory is unavailable'))
+          return scope.sessions.create({ cwd: home + directory.slice(1) })
+        }
+        return scope.sessions.create({ cwd: directory })
+      }
+
+      ctx.inject(['resources'], (scope) => {
+        scope.effect(() => scope.resources.register({
+          protocol: 'panechat',
+          async *open(address, { signal }) {
+            const id = parsePaneAddress(address)
+            if (signal.aborted) return
+            if (id === undefined) {
+              yield { ok: false, error: { code: 'gateway/bad-request', message: `Invalid panechat address: ${address}` } }
+              return
+            }
+            let reference
+            try {
+              // Restored tabs may be pinned before the initial Session catalog arrives.
+              const catalog = scope.sessions.list.getSnapshot()
+              if (catalog.phase === 'pending' && catalog.byId[id] === undefined) await scope.sessions.refresh()
+              if (signal.aborted) return
+              reference = scope.sessions.retain(id, { source: 'paneChat', signal })
+            } catch (error) {
+              if (!signal.aborted) {
+                const code = failureText(error).startsWith('sessions.retain: unknown session ')
+                  ? 'session/not-found' : 'gateway/internal'
+                yield { ok: false, error: { code, message: failureText(error), details: { sessionId: id } } }
+              }
+              return
+            }
+            try {
+              yield { ok: true, value: { id, reference } }
+              await waitForAbort(signal)
+            } finally {
+              reference.release()
+            }
+          },
+        }), 'threads: panechat resource')
+      })
+
+      ctx.inject(['sidebarRightTabs'], (scope) => {
+        scope.effect(() => scope.sidebarRightTabs.register({
+          id: PANECHAT_ID,
+          kind: 'panechat',
+          patterns: [PANE_PREFIX + '**'],
+          priority: 'extension',
+          canOpen: (address) => parsePaneAddress(address) !== undefined,
+          title,
+        }), 'threads: panechat tab type')
+        scope.effect(() => scope.sidebarRightTabs.register({
+          id: PANE_START_ID,
+          kind: 'panechat-start',
+          title: startTitle,
+          guide: [{ id: 'new-pane', order: 10, title: startTitle, description }],
+        }), 'threads: panechat launch page')
+      })
+
+      ctx.inject(['resources', 'sidebarRight'], (scope) => {
+        const { mounted, openTabs } = scope.sidebarRight
+        const subscribeMounted = (listener) => mounted.subscribe(listener)
+        const getMounted = () => mounted.getSnapshot()
+        const subscribeTabs = (listener) => openTabs.subscribe(listener)
+        const getTabs = () => openTabs.getSnapshot()
+
+        function PaneChatTab({ sessionId, useResource, useTabInfo, SessionProvider, renderSlot }) {
+          const { tab } = useTabInfo()
+          const resource = useResource(tab.contentId)
+          const mainSessionId = React.useSyncExternalStore(subscribeMounted, getMounted)
+          const tabs = React.useSyncExternalStore(subscribeTabs, getTabs)
+          const first = tabs.find((entry) => entry.sessionId === sessionId
+            && entry.kind === 'panechat' && entry.contentId === tab.contentId)
+          let content
+          if (resource.status === 'failed') {
+            content = h('p', { role: 'alert', 'data-dsh-pane-error': '' }, resource.failure.message)
+          } else if (resource.value === undefined) {
+            content = h('p', { role: 'status' }, t('正在打开会话…', 'Opening chat…'))
+          } else if (resource.value.id === mainSessionId || (first !== undefined && first.tabId !== tab.id)) {
+            content = h('p', { role: 'status' }, t('此会话已在其他位置打开', 'This chat is already open elsewhere'))
+          } else {
+            content = h(SessionProvider, { session: resource.value.reference }, renderSlot('panechat.conversation', {}))
+          }
+          return h('div', { 'data-dsh-pane-chat': '' }, content)
+        }
+
+        scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
+          name: 'sidebar.right.pane.tab',
+          key: PANECHAT_ID,
+          children: { 'panechat.conversation': { kind: 'single', scope: 'session' } },
+        }, PaneChatTab)), 'threads: panechat body')
+        scope.effect(() => scope.slots.inject('panechat.conversation', () => scope.slots.register({
+          name: 'panechat.conversation',
+        }, PaneConversation)), 'threads: panechat conversation')
+      })
+
+      ctx.inject(['remote'], (scope) => {
+        function PaneStart({ sessionId, useSessions, useTabInfo }) {
+          const { tab } = useTabInfo()
+          const sessionCwd = useSessions((state) => state.byId[sessionId]?.cwd) || '~'
+          const [cwd, setCwd] = useState(undefined)
+          const [creating, setCreating] = useState(false)
+          const [failure, setFailure] = useState('')
+          const directory = cwd ?? sessionCwd
+
+          async function submit(event) {
+            event.preventDefault()
+            if (creating || directory.trim() === '') return
+            setCreating(true)
+            setFailure('')
+            try {
+              const id = await createPaneSession(scope, directory)
+              if (!tab.signal.aborted) tab.actions.openResource(paneAddress(id), { replaceTab: true })
+            } catch (error) {
+              if (!tab.signal.aborted) setFailure(failureText(error))
+            } finally {
+              if (!tab.signal.aborted) setCreating(false)
+            }
+          }
+
+          return h('form', { 'data-dsh-pane-start': '', onSubmit: submit, 'aria-busy': creating },
+            h('label', null, t('目录', 'Directory'),
+              h('input', { type: 'text', value: directory, required: true, disabled: creating,
+                onChange: (event) => setCwd(event.target.value) })),
+            h('button', { type: 'submit', disabled: creating || directory.trim() === '' },
+              creating ? t('正在创建…', 'Creating…') : t('创建', 'Create')),
+            failure && h('p', { role: 'alert', 'data-dsh-pane-error': '' }, failure))
+        }
+
+        scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
+          name: 'sidebar.right.pane.tab',
+          key: PANE_START_ID,
+        }, PaneStart)), 'threads: panechat launch body')
+      })
+
+      ctx.inject(['commandUi', 'conversation', 'sidebarRight', 'remote'], (scope) => {
+        const pending = new Set()
+        async function openFromCommand({ sessionId }) {
+          const owner = scope.sidebarRight.mounted.getSnapshot()
+          if (owner === undefined || pending.has(owner)) return
+          pending.add(owner)
+          try {
+            const cwd = scope.sessions.list.getSnapshot().byId[sessionId]?.cwd || '~'
+            const id = await createPaneSession(scope, cwd)
+            if (scope.sidebarRight.mounted.getSnapshot() !== owner) {
+              throw new Error(t('会话已创建，右栏已切换', 'Chat created, but the active sidebar has changed'))
+            }
+            scope.sidebarRight.openResource(paneAddress(id))
+          } catch (error) {
+            const actx = scope.sessions.scope(sessionId)
+            if (actx !== undefined) scope.conversation.input.for(actx).notify('error', failureText(error))
+          } finally {
+            pending.delete(owner)
+          }
+        }
+        scope.effect(() => scope.commandUi.register({
+          name: 'panechat',
+          label: startTitle,
+          description,
+          available: () => scope.sidebarRight.mounted.getSnapshot() !== undefined,
+          ui: { kind: 'action', run: (session) => { void openFromCommand(session) } },
+        }), 'threads: /panechat')
+      })
     }
   },
 })
