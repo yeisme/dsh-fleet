@@ -182,7 +182,7 @@ window.__ModuleLoader__.load({
         || reason?.kind === 'error' || reason?.kind === 'interrupted'
         || (reason?.kind === 'aborted' && reason.reason?.kind === 'hook'
           && reason.reason.reason === 'deepseek-account/signed-out')) return 'blocked'
-      if (running === false && reason !== undefined && lastSeenSeq !== undefined && turn.seq > lastSeenSeq) return 'ready'
+      if (running === false && reason !== undefined && turn.seq > (lastSeenSeq ?? -1)) return 'ready'
       if (running) return 'running'
       return undefined
     }
@@ -308,25 +308,21 @@ window.__ModuleLoader__.load({
     }
 
     function paneReadCursors() {
-      const owners = new Map()
+      const cursors = new Map()
       return {
         get(owner, tabId, contentId) {
-          const cursor = owners.get(owner)?.get(tabId)
-          return cursor?.contentId === contentId ? cursor.lastSeenSeq : undefined
+          const cursor = cursors.get(contentId)
+          return cursor?.owner === owner && cursor.tabId === tabId ? cursor.lastSeenSeq : undefined
         },
         observe(owner, tab, seq, focused) {
           if (tab.signal.aborted) return undefined
-          let tabs = owners.get(owner)
-          if (tabs === undefined) owners.set(owner, tabs = new Map())
-          let cursor = tabs.get(tab.id)
-          if (cursor?.signal !== tab.signal || cursor.contentId !== tab.contentId) {
+          let cursor = cursors.get(tab.contentId)
+          if (cursor?.signal !== tab.signal || cursor.owner !== owner || cursor.tabId !== tab.id) {
             // Existing history is the baseline when a tab first acquires its event window.
-            cursor = { signal: tab.signal, contentId: tab.contentId, lastSeenSeq: seq }
-            tabs.set(tab.id, cursor)
-            const { id } = tab
+            cursor = { signal: tab.signal, owner, tabId: tab.id, lastSeenSeq: seq }
+            cursors.set(tab.contentId, cursor)
             tab.signal.addEventListener('abort', () => {
-              if (tabs.get(id) === cursor) tabs.delete(id)
-              if (tabs.size === 0 && owners.get(owner) === tabs) owners.delete(owner)
+              if (cursors.get(tab.contentId) === cursor) cursors.delete(tab.contentId)
             }, { once: true })
           } else if (focused) {
             cursor.lastSeenSeq = Math.max(cursor.lastSeenSeq, seq)
