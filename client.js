@@ -201,8 +201,32 @@ window.__ModuleLoader__.load({
       return React.useSyncExternalStore(subscribe, getSnapshot)
     }
 
-    function tabCaption(title, state, t) {
+    /** Branch glyph used by the continuation card and the fork tab chip. */
+    function ForkGlyph({ attribute, size }) {
+      const mark = attribute ?? 'data-dsh-fork-mark'
+      return h('svg', {
+        [mark]: '',
+        width: size ?? 14,
+        height: size ?? 14,
+        viewBox: '0 0 16 16',
+        'aria-hidden': 'true',
+        focusable: 'false',
+        style: { flex: 'none', width: `${size ?? 14}px`, height: `${size ?? 14}px` },
+      },
+        h('path', {
+          d: 'M4 3.2v5.4c0 1.3 1.1 2.4 2.4 2.4H12',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: '1.3',
+          strokeLinecap: 'round',
+        }),
+        h('circle', { cx: '4', cy: '2.6', r: '1.5', fill: 'currentColor' }),
+        h('circle', { cx: '12.6', cy: '11', r: '1.5', fill: 'currentColor' }))
+    }
+
+    function tabCaption(title, state, t, forked) {
       return h('span', { 'data-dsh-pane-title': '', title },
+        forked === true && h(ForkGlyph, { attribute: 'data-dsh-fork-tabmark', size: 11 }),
         state && h('span', { 'data-dsh-pane-state': state, role: 'img', 'aria-label': t(state), title: t(state) }),
         h('span', { 'data-dsh-pane-title-text': '' }, title))
     }
@@ -902,8 +926,8 @@ window.__ModuleLoader__.load({
 
     /**
      * Whether a fork refusal only means "this chat has no completed turn to
-     * carry over". Declared as a hoisted function (not a const) so the launch
-     * page can never observe it before initialization.
+     * carry over". Declared as a hoisted function (not a const) so a freshly
+     * hot-replaced bundle can never observe it before initialization.
      * @param code - RPC error code reported by the fork.
      * @returns true when a fresh chat in the same directory is the right fallback.
      */
@@ -911,30 +935,201 @@ window.__ModuleLoader__.load({
       return code === 'session/fork-unavailable' || code === 'session/not-found'
     }
 
+    /* ------------------------------------------------------------ fork registry */
+
+    // Factory scope runs before the plugin is applied, but a hot-swapped bundle
+    // can invoke `apply` while this body is still on the stack: everything the
+    // apply path may touch stays a hoisted `var` or a function declaration, never
+    // a `const`/`let` (two TDZ crashes proved this the hard way).
+    /** localStorage key holding the panels this plugin forked. */
+    var FORK_STORE_KEY = 'dsh-threads:forks:v1'
+
+    /** Oldest records beyond this count are dropped. */
+    var FORK_STORE_LIMIT = 200
+
     /**
-     * Open a panel that continues the owner's conversation. A native fork keeps
-     * the completed turns as context and inherits the workspace directory, so a
-     * side panel never asks for a directory. A chat with no completed turn has
-     * no prefix to fork; it degrades to a fresh chat in the same directory.
-     * @param scope - injected client scope carrying `sessions`.
-     * @param sourceId - the conversation to continue.
-     * @param open - receives the new panechat address.
-     * @param options - optional cancellation signal.
-     * @returns the new Session id.
+     * Panels this plugin forked: child Session id -> where it came from.
+     * The host does not expose `header.isSeeded` on the session list, so the
+     * plugin records its own forks; unknown Sessions simply render natively.
+     * Lazily materialized so no caller can observe it before initialization.
      */
-    async function openContinuedPane(scope, sourceId, open, { signal } = {}) {
-      signal?.throwIfAborted()
-      const source = scope.sessions.list.getSnapshot().byId[sourceId]
-      let id
+    var forkRegistry
+
+    /** @returns the fork registry, loaded from storage on first use. */
+    function forks() {
+      if (forkRegistry === undefined) forkRegistry = loadForks()
+      return forkRegistry
+    }
+
+    /**
+     * Read the persisted fork records.
+     * @returns the registry, empty when storage is unavailable or corrupt.
+     */
+    function loadForks() {
+      const records = new Map()
       try {
-        id = await scope.sessions.fork({ sessionId: sourceId, increaseTitle: true })
+        const raw = localStorage.getItem(FORK_STORE_KEY)
+        if (raw === null) return records
+        const parsed = JSON.parse(raw)
+        if (!Array.isArray(parsed)) return records
+        for (const row of parsed) {
+          if (typeof row?.id !== 'string') continue
+          records.set(row.id, {
+            parentId: typeof row.parentId === 'string' ? row.parentId : '',
+            title: typeof row.title === 'string' ? row.title : '',
+            turns: Number.isFinite(row.turns) ? row.turns : 0,
+            at: Number.isFinite(row.at) ? row.at : 0,
+            expanded: row.expanded === true,
+          })
+        }
+      } catch { /* storage unavailable or unparsable: keep the in-memory registry */ }
+      return records
+    }
+
+    /** Persist the registry, dropping the oldest records past the limit. */
+    function saveForks() {
+      try {
+        const rows = [...forks()].map(([id, record]) => ({ id, ...record }))
+        rows.sort((left, right) => right.at - left.at)
+        localStorage.setItem(FORK_STORE_KEY, JSON.stringify(rows.slice(0, FORK_STORE_LIMIT)))
+      } catch { /* a full or absent storage must never break forking */ }
+    }
+
+    /**
+     * Record one fork so its panel can show the continuation card.
+     * @param childId - the forked Session.
+     * @param record - where it came from: parent Session, title, inherited turns.
+     */
+    function rememberFork(childId, record) {
+      forks().set(childId, { expanded: false, ...record })
+      saveForks()
+    }
+
+    /**
+     * @param sessionId - any Session.
+     * @returns its fork record, or undefined when this plugin did not fork it.
+     */
+    function forkOf(sessionId) {
+      return forks().get(sessionId)
+    }
+
+    /**
+     * Remember whether one fork panel shows its inherited history.
+     * @param sessionId - the forked Session.
+     * @param expanded - true once the inherited transcript is revealed.
+     */
+    function setForkExpanded(sessionId, expanded) {
+      const record = forks().get(sessionId)
+      if (record === undefined || record.expanded === expanded) return
+      forks().set(sessionId, { ...record, expanded })
+      saveForks()
+    }
+
+    /**
+     * Count the completed turns carried into a fork.
+     * @param sessions - client session controller.
+     * @param sessionId - the source Session.
+     * @returns completed turns visible in the source's loaded window.
+     */
+    function countTurns(sessions, sessionId) {
+      const entries = sessions.binding(sessionId)?.eventSource.getSnapshot()?.entries
+      if (!Array.isArray(entries)) return 0
+      let turns = 0
+      for (const entry of entries) {
+        if (entry?.event?.type === 'turn/start') turns += 1
+      }
+      return turns
+    }
+
+    /**
+     * Explain why a fork panel could not take a pane of its own.
+     * @param t - zh/en resolver of the calling scope.
+     * @param block - the refusal reported by the sidebar.
+     * @returns the sentence shown above the source composer.
+     */
+    function splitHint(t, block) {
+      if (block === 'width') {
+        return t('右栏太窄，分叉已开在同一栏的新标签里（拖宽后可分栏）',
+          'Column too narrow: the fork opened as a tab here (widen the column to split)')
+      }
+      if (block === 'budget') {
+        return t('右栏已占满两个栏位，分叉已开在同一栏的新标签里',
+          'The column already holds two panes: the fork opened as a tab here')
+      }
+      return t('没能定位当前栏位，分叉已开在同一栏的新标签里',
+        'Could not place a new pane: the fork opened as a tab here')
+    }
+
+    /**
+     * Continue one conversation in a new Session: a native fork keeps the
+     * completed turns as context and inherits the workspace directory, so a side
+     * panel never asks for a directory. A chat with no completed turn has no
+     * prefix to fork; it degrades to a fresh chat in the same directory.
+     * @param deps - client services carrying `sessions`.
+     * @param sourceId - the conversation to continue.
+     * @param options - optional cancellation signal.
+     * @returns the new Session id and whether it really carries context.
+     */
+    async function continueConversation(deps, sourceId, { signal } = {}) {
+      signal?.throwIfAborted()
+      const source = deps.sessions.list.getSnapshot().byId[sourceId]
+      const cwd = source?.cwd
+      const turns = countTurns(deps.sessions, sourceId)
+      let id
+      let forked = true
+      try {
+        id = await deps.sessions.fork({ sessionId: sourceId, increaseTitle: true })
       } catch (error) {
-        if (!isUnforkable(error?.rpcError?.code) || typeof source?.cwd !== 'string') throw error
-        id = await scope.sessions.create({ cwd: source.cwd })
+        if (!isUnforkable(error?.rpcError?.code) || typeof cwd !== 'string') throw error
+        id = await deps.sessions.create({ cwd })
+        forked = false
       }
       signal?.throwIfAborted()
-      open(paneAddress(id))
-      return id
+      if (forked) {
+        rememberFork(id, {
+          parentId: sourceId,
+          title: source?.displayTitle ?? source?.title ?? '',
+          turns,
+          at: Date.now(),
+        })
+      }
+      return { id, forked }
+    }
+
+    /**
+     * Continue one conversation in a panel placed beside it: split the docked
+     * pane to its right and land the panel in the new pane. When the column
+     * cannot split (width, pane budget, no live target) the panel opens as one
+     * more tab in the source pane — never in place of the tab already there.
+     * @param deps - client services carrying `sessions`, `sidebarRight`, `conversation`.
+     * @param sourceId - the conversation the new panel continues.
+     * @param options - optional cancellation signal and the element that asked.
+     * @returns the new Session id, whether it was split, and the block reason when it was not.
+     */
+    async function openForkPaneBeside(deps, sourceId, { signal, anchor } = {}) {
+      const { sidebarRight } = deps
+      const target = sidebarRight.focusedTarget?.(anchor ?? null) ?? sidebarRight.commandTarget?.(anchor ?? null)
+      const live = target !== undefined && sidebarRight.isTargetCurrent(target) ? target : undefined
+      const block = live === undefined ? 'stale' : sidebarRight.splitBlock(live)
+      const { id } = await continueConversation(deps, sourceId, { signal })
+      signal?.throwIfAborted()
+      const address = paneAddress(id)
+      const split = live === undefined ? undefined : sidebarRight.split(live.paneId)
+      // Report the reason that actually held: the pre-check may pass while the
+      // split itself still declines (layout or width moved while forking).
+      const refusal = split !== undefined
+        ? undefined
+        : (live === undefined ? block : sidebarRight.splitBlock(live) ?? block)
+      if (split !== undefined) sidebarRight.openResource(address, { paneId: split })
+      else if (live !== undefined) sidebarRight.openResource(address, { paneId: live.paneId })
+      else sidebarRight.openResource(address)
+      // The panel is the new conversation; put the caret in it.
+      try {
+        await deps.sessions.using(id, { source: 'paneChat', signal }, (reference) => {
+          deps.conversation.input.for(reference.binding.ctx).focus()
+        })
+      } catch { /* focus is an affordance, never a failure of the fork */ }
+      return { id, split: split !== undefined, block: refusal }
     }
 
     function registerPaneChat(ctx, statusText, paneCursors) {
@@ -953,14 +1148,47 @@ window.__ModuleLoader__.load({
       const failureText = (error) => String(error?.message ?? error)
 
       const CSS = `
-[data-dsh-pane-chat]{display:flex;width:100%;height:100%;min-width:0;min-height:0;}
+[data-dsh-pane-chat]{display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;}
+[data-dsh-pane-body]{display:flex;flex:1;min-width:0;min-height:0;}
 [data-dsh-pane-start]{display:grid;align-content:start;gap:10px;width:100%;max-width:26rem;margin-inline:auto;padding:16px;box-sizing:border-box;}
-[data-dsh-pane-start] label{display:grid;gap:6px;min-width:0;}
-[data-dsh-pane-start] input,[data-dsh-pane-start] button{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:7px 10px;}
+[data-dsh-pane-start] button{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:7px 10px;}
 [data-dsh-pane-start] button{justify-self:start;cursor:pointer;}
 [data-dsh-pane-start] button:disabled{opacity:.55;cursor:default;}
+[data-dsh-pane-start-lead]{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);}
 [data-dsh-pane-error]{color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere;margin:0;}
 [data-dsh-pane-chat]>[role]{padding:12px;}
+/* Folded fork panel: hide only the transcript block, never the composer seat.
+   The transcript slot itself is display:contents, so its own children carry the box. */
+[data-dsh-fork="folded"] [data-conversation-scroll] > :first-child,
+[data-dsh-fork="folded"] [data-conversation-scroll] > :first-child > *{display:none;}
+[data-dsh-fork-card]{display:flex;flex:none;flex-wrap:wrap;align-items:flex-start;gap:8px 10px;padding:9px 12px;
+  border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);}
+[data-dsh-fork-card-main]{display:flex;flex:1 1 11rem;flex-direction:column;gap:3px;min-width:0;}
+[data-dsh-fork-card-title]{margin:0;font-size:13px;line-height:1.35;color:var(--dsw-alias-label-primary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+[data-dsh-fork-card-meta]{margin:0;font-size:12px;line-height:1.35;color:var(--dsw-alias-label-secondary);}
+[data-dsh-fork-card-actions]{display:flex;flex:none;flex-wrap:wrap;align-items:center;gap:6px;margin-left:auto;}
+[data-dsh-fork-action]{display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:999px;
+  border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary);
+  font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap;
+  transition:color 120ms ease,border-color 120ms ease,background-color 120ms ease;}
+[data-dsh-fork-action]:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2);
+  background:rgba(10,132,255,.08);}
+[data-dsh-fork-action]:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;}
+[data-dsh-fork-mark]{flex:none;width:14px;height:14px;margin-top:1px;color:var(--dsw-alias-label-tertiary);}
+[data-dsh-fork-tabmark]{flex:none;width:11px;height:11px;margin-right:4px;color:var(--dsw-alias-label-tertiary);}
+[data-dsh-fork-guide]{display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:100%;height:100%;
+  box-sizing:border-box;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;
+  background:var(--dsw-alias-bg-layer-1);color:inherit;font:inherit;text-align:left;cursor:pointer;
+  transition:background-color 120ms ease,border-color 120ms ease;}
+[data-dsh-fork-guide]:hover{background:rgba(10,132,255,.08);border-color:var(--dsw-alias-border-l2);}
+[data-dsh-fork-guide]:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;}
+[data-dsh-fork-guide][data-busy]{opacity:.7;cursor:default;}
+[data-dsh-fork-guide-icon]{color:var(--dsw-alias-label-secondary);}
+[data-dsh-fork-guide-title]{font-size:13px;line-height:1.3;color:var(--dsw-alias-label-primary);}
+[data-dsh-fork-guide-desc]{font-size:11px;line-height:1.35;color:var(--dsw-alias-label-secondary);}
+[data-dsh-fork-guide-error]{font-size:11px;line-height:1.35;color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere;}
+@media (prefers-reduced-motion:reduce){[data-dsh-fork-action]{transition:none;}}
 `
       ctx.effect(() => {
         const style = document.createElement('style')
@@ -1022,6 +1250,60 @@ window.__ModuleLoader__.load({
         }), 'threads: panechat launch page')
       })
 
+      ctx.inject(['slots', 'sessions', 'sidebarRight', 'conversation'], (scope) => {
+        /**
+         * One-click guide card: fork the chat behind the guide into a panel beside
+         * it. It replaces the shipped card (which would only open the launcher
+         * page) so forking costs exactly one click.
+         */
+        function ForkGuideCard({ sessionId, title, description: blurb }) {
+          const [busy, setBusy] = useState(false)
+          const [failure, setFailure] = useState('')
+          const owner = sessionId ?? scope.sidebarRight.mounted.getSnapshot()
+
+          async function pick(event) {
+            if (busy || owner === undefined) return
+            setBusy(true)
+            setFailure('')
+            try {
+              const result = await openForkPaneBeside(scope, owner, { anchor: event.currentTarget })
+              if (result.block !== undefined) {
+                const actx = scope.sessions.scope(owner)
+                if (actx !== undefined) {
+                  scope.conversation.input.for(actx).notify('info', splitHint(t, result.block))
+                }
+              }
+            } catch (error) {
+              setFailure(failureText(error))
+            } finally {
+              setBusy(false)
+            }
+          }
+
+          return h('button', {
+            type: 'button',
+            'data-dsh-fork-guide': '',
+            'data-busy': busy ? '' : undefined,
+            onClick: pick,
+            title: blurb ?? description(),
+          },
+            h(ForkGlyph, { attribute: 'data-dsh-fork-guide-icon', size: 15 }),
+            h('span', { 'data-dsh-fork-guide-title': '' },
+              busy ? t('正在分叉…', 'Forking…') : (title ?? startTitle())),
+            blurb !== undefined && failure === ''
+              ? h('span', { 'data-dsh-fork-guide-desc': '' }, blurb)
+              : null,
+            failure !== ''
+              ? h('span', { 'data-dsh-fork-guide-error': '', role: 'alert' }, failure)
+              : null)
+        }
+
+        scope.effect(() => scope.slots.inject('sidebar.right.tab.guide.entry', () => scope.slots.register({
+          name: 'sidebar.right.tab.guide.entry',
+          key: PANE_START_ID,
+        }, ForkGuideCard)), 'threads: fork guide card')
+      })
+
       ctx.inject(['resources', 'sidebarRight'], (scope) => {
         const { mounted, openTabs } = scope.sidebarRight
         const subscribeMounted = (listener) => mounted.subscribe(listener)
@@ -1029,13 +1311,71 @@ window.__ModuleLoader__.load({
         const subscribeTabs = (listener) => openTabs.subscribe(listener)
         const getTabs = () => openTabs.getSnapshot()
 
+        /**
+         * Header of a forked panel: what it continues, how much context it
+         * carries, and the two things a person wants next (show or hide the
+         * inherited transcript, jump back to the original chat).
+         */
+        function ForkCard({ sessionId, folded, onToggle, onOpenSource }) {
+          const record = forkOf(sessionId)
+          if (record === undefined) return null
+          const source = record.title.trim() === '' ? t('上一段对话', 'the earlier chat') : record.title
+          const turns = record.turns > 0
+            ? t(`带入 ${record.turns} 轮对话`, `${record.turns} turns carried over`)
+            : t('已带入上下文', 'context carried over')
+          const meta = folded ? `${turns} · ${t('历史已收起', 'history folded')}` : `${turns} · ${t('历史已展开', 'history shown')}`
+          return h('div', { 'data-dsh-fork-card': '' },
+            h(ForkGlyph, {}),
+            h('div', { 'data-dsh-fork-card-main': '' },
+              h('p', { 'data-dsh-fork-card-title': '', title: source },
+                t(`接续自《${source}》`, `Continued from “${source}”`)),
+              h('p', { 'data-dsh-fork-card-meta': '' }, meta)),
+            h('div', { 'data-dsh-fork-card-actions': '' },
+              h('button', {
+                type: 'button',
+                'data-dsh-fork-action': '',
+                onClick: onToggle,
+              }, folded ? t('展开历史', 'Show history') : t('收起历史', 'Fold history')),
+              record.parentId === '' ? null : h('button', {
+                type: 'button',
+                'data-dsh-fork-action': '',
+                onClick: onOpenSource,
+              }, t('跳回原对话', 'Open original'))))
+        }
+
         function PaneChatTab({ sessionId, useResource, useTabInfo, SessionProvider, renderSlot }) {
           const { tab } = useTabInfo()
           const resource = useResource(tab.contentId)
           const mainSessionId = React.useSyncExternalStore(subscribeMounted, getMounted)
           const tabs = React.useSyncExternalStore(subscribeTabs, getTabs)
+          const paneId = resource.value?.id
+          const forked = paneId !== undefined && forkOf(paneId) !== undefined
+          // Start folded: a fork must never flash the inherited transcript while
+          // its Session reference is still resolving. Non-fork panels ignore it.
+          const [folded, setFolded] = useState(true)
           const first = tabs.find((entry) => entry.sessionId === sessionId
             && entry.kind === 'panechat' && entry.contentId === tab.contentId)
+
+          // A different Session in the same tab starts from its own recorded state.
+          useEffect(() => {
+            if (paneId === undefined) return
+            const record = forkOf(paneId)
+            setFolded(record !== undefined && record.expanded !== true)
+          }, [paneId])
+
+          // The inherited transcript folds away until the person actually talks
+          // here. A queued or running turn is the reliable signal: it can only
+          // exist because someone typed in this panel, unlike a history scan that
+          // also catches freshly loaded seed events.
+          const paneBinding = paneId === undefined ? undefined : scope.sessions.binding(paneId)
+          const paneSession = useObservable(paneBinding?.session)
+          const speaking = paneSession?.running === true || (paneSession?.pendingSubmissions?.length ?? 0) > 0
+          useEffect(() => {
+            if (paneId === undefined || !folded || !speaking) return
+            setFolded(false)
+            setForkExpanded(paneId, true)
+          }, [paneId, folded, speaking])
+
           let content
           if (resource.status === 'failed') {
             content = h('p', { role: 'alert', 'data-dsh-pane-error': '' }, resource.failure.message)
@@ -1046,7 +1386,28 @@ window.__ModuleLoader__.load({
           } else {
             content = h(SessionProvider, { session: resource.value.reference }, renderSlot('panechat.conversation', {}))
           }
-          return h('div', { 'data-dsh-pane-chat': '' }, content)
+
+          function toggle() {
+            if (paneId === undefined) return
+            const next = !folded
+            setFolded(next)
+            setForkExpanded(paneId, !next)
+          }
+
+          function openSource() {
+            const record = paneId === undefined ? undefined : forkOf(paneId)
+            if (record === undefined || record.parentId === '') return
+            try {
+              scope.get('uiWorkspace')?.openSession?.(record.parentId)
+            } catch { /* navigation is an affordance, never a failure of the panel */ }
+          }
+
+          return h('div', {
+            'data-dsh-pane-chat': '',
+            'data-dsh-fork': forked ? (folded ? 'folded' : 'open') : undefined,
+          },
+            forked ? h(ForkCard, { sessionId: paneId, folded, onToggle: toggle, onOpenSource: openSource }) : null,
+            h('div', { 'data-dsh-pane-body': '' }, content))
         }
 
         scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
@@ -1101,7 +1462,8 @@ window.__ModuleLoader__.load({
           }, [owner, tab.id, tab.contentId, tab.signal, focus, latestEndSeq, session?.openState])
           const lastSeenSeq = paneCursors.get(owner, tab.id, tab.contentId)
           const state = paneAttention(status, summary, binding, lastSeenSeq, resource)
-          return tabCaption(titleFor(summary, tab.title), state, statusText)
+          const forked = id !== undefined && forkOf(id) !== undefined
+          return tabCaption(titleFor(summary, tab.title), state, statusText, forked)
         }
 
         scope.effect(() => scope.slots.inject('sidebar.right.pane.tab.title', () => scope.slots.register({
@@ -1133,39 +1495,34 @@ window.__ModuleLoader__.load({
         }, PaneStarterSlot)), 'threads: panechat starter capsules')
       })
 
-      ctx.inject(['remote'], (scope) => {
-        // The launch page is not a form any more: it continues the conversation
-        // it was opened from (native fork, same directory) and replaces itself
-        // with that panel. Nobody types a directory.
-        function PaneStart({ sessionId, useTabInfo }) {
-          const { tab } = useTabInfo()
-          const [attempt, setAttempt] = useState(0)
+      ctx.inject(['remote', 'sessions', 'sidebarRight', 'conversation'], (scope) => {
+        // The launch page no longer forks by itself: restoring an old tab must not
+        // mint a Session. It is a single button, and the real entry point is the
+        // guide card that forks straight into the pane beside this chat.
+        function PaneStart({ sessionId }) {
+          const [busy, setBusy] = useState(false)
           const [failure, setFailure] = useState('')
 
-          useEffect(() => {
-            const controller = new AbortController()
+          async function fork() {
+            if (busy) return
+            setBusy(true)
             setFailure('')
-            void (async () => {
-              try {
-                await openContinuedPane(scope, sessionId, (address) => {
-                  if (controller.signal.aborted || tab.signal.aborted) return
-                  tab.actions.openResource(address, { replaceTab: true })
-                }, { signal: controller.signal })
-              } catch (error) {
-                if (!controller.signal.aborted && !tab.signal.aborted) setFailure(failureText(error))
-              }
-            })()
-            return () => controller.abort()
-          }, [sessionId, attempt])
-
-          if (failure === '') {
-            return h('div', { 'data-dsh-pane-start': '', 'aria-busy': true },
-              h('p', { role: 'status' }, t('正在分叉当前对话…', 'Forking this chat…')))
+            try {
+              await openForkPaneBeside(scope, sessionId, {})
+            } catch (error) {
+              setFailure(failureText(error))
+            } finally {
+              setBusy(false)
+            }
           }
-          return h('div', { 'data-dsh-pane-start': '', 'aria-busy': false },
-            h('p', { role: 'alert', 'data-dsh-pane-error': '' }, failure),
-            h('button', { type: 'button', onClick: () => { setAttempt((value) => value + 1) } },
-              t('重试', 'Retry')))
+
+          return h('div', { 'data-dsh-pane-start': '', 'aria-busy': busy },
+            h('p', { 'data-dsh-pane-start-lead': '' },
+              t('把当前对话分叉成一个新面板：带上下文、同目录，不打断这边。',
+                'Fork this chat into a new panel with its context, in the same directory.')),
+            h('button', { type: 'button', disabled: busy, onClick: fork },
+              busy ? t('正在分叉…', 'Forking…') : t('分叉对话', 'Fork chat')),
+            failure !== '' && h('p', { role: 'alert', 'data-dsh-pane-error': '' }, failure))
         }
 
         scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
@@ -1177,22 +1534,23 @@ window.__ModuleLoader__.load({
       ctx.inject(['conversation', 'sidebarRight', 'remote'], (scope) => {
         const pending = new Set()
         /**
-         * Fork one conversation into a new panel beside the owner chat, in the
-         * same directory as the source (no directory prompt anywhere).
+         * Fork one conversation into a panel beside the owner chat, in the same
+         * directory as the source (no directory prompt anywhere), and say so when
+         * the column is too narrow to split.
          * @param owner - the main Session mounted in the right Sidebar.
          * @param sourceId - the conversation to continue.
-         * @param noticeSession - where a failure toast lands.
+         * @param noticeSession - where a failure or hint toast lands.
+         * @param anchor - the element that asked, for pane targeting.
          */
-        async function openContinuationFrom(owner, sourceId, noticeSession = owner) {
+        async function openContinuationFrom(owner, sourceId, noticeSession = owner, anchor) {
           if (scope.sidebarRight.mounted.getSnapshot() !== owner || pending.has(owner)) return
           pending.add(owner)
           try {
-            await openContinuedPane(scope, sourceId, (address) => {
-              if (scope.sidebarRight.mounted.getSnapshot() !== owner) {
-                throw new Error(t('会话已创建，右栏已切换', 'Chat created, but the active sidebar has changed'))
-              }
-              scope.sidebarRight.openResource(address)
-            })
+            const result = await openForkPaneBeside(scope, sourceId, { anchor })
+            if (result.block !== undefined) {
+              const actx = scope.sessions.scope(noticeSession)
+              if (actx !== undefined) scope.conversation.input.for(actx).notify('info', splitHint(t, result.block))
+            }
           } catch (error) {
             const actx = scope.sessions.scope(noticeSession)
             if (actx !== undefined) scope.conversation.input.for(actx).notify('error', failureText(error))

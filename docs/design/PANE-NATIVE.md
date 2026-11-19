@@ -660,3 +660,84 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 | 失败时面板显示错误 + 「重试」按钮 | ✅（TDZ 那次就是这个 UI 抓到的） |
 
 副作用（有意接受）：fork 出来的会话是**普通会话**，会出现在左侧会话列表里（原生 fork 语义如此），不再像旧子代理方案那样隐藏。测试产生的两条 fork 与一条空白会话已用 UI 归档。
+
+---
+
+## 22. v2：分栏在旁边 + 历史默认折叠（2026-11-19 18:25）
+
+主人三条追加要求：「别在原来位置，最好在对应 fork 对话旁边」「默认不用展开前面的全部信息」「顺便美化完善」。§21 的 v1 是「替换当前 tab + 整段历史铺满」，这次全改。
+
+### 22.1 落位：分栏在旁边（不是替换）
+
+| 事实（源码核对） | 结论 |
+|---|---|
+| `ISidebarRight.split(paneId?)` → 向右拆 docked pane，返回新 `PaneId` | 新面板能精确落在右侧 |
+| `ISidebarRight.splitBlock(target)` → `stale/collapsed/float/empty/budget/width` | 分栏被拒的六种原因可判定 |
+| 右栏最多 2 个 docked pane（`dockPaneIds(layout).length >= 2` → `budget`） | 第三次分叉必然退化 |
+| `openResource(address, {paneId})` 把 tab 落进指定 pane；不传 `replaceTab` 就不覆盖 | 「别在原来位置」由此实现 |
+| `splitBlock` 的 `width` 由视图层 `measureRoom` 上报（`fits.get(paneId)?.row !== false`） | 窄栏分不了栏 |
+
+实现：`openForkPaneBeside(deps, sourceId, {anchor})` —— 用 `focusedTarget()/commandTarget(anchor)` 捕获当前 pane → `splitBlock` 判定 → **先造 fork、再 split、再 `openResource({paneId})`**（先造再拆的好处：fork 失败不留空 pane）→ 收起失败时退化到同 pane 新 tab，并在原会话 composer 上方 `notify('info', …)` 说明原因。
+
+### 22.2 历史默认折叠：只藏 transcript，绝不藏 composer
+
+结构（实测 DOM）：
+```
+[data-conversation-scroll]
+  ├── div[data-slot]              ← 消息列表（display:contents，其子节点才有盒）
+  └── div[data-composer-seat]     ← composer，必须在折叠时仍然可见
+```
+
+**第一版踩坑**：`[data-dsh-fork=folded] [data-conversation-scroll]{display:none}` 把 composer 一起藏了 → 折叠面板输入框宽度 0、根本不能打字（`agent-browser click` 直接报 `not visible`）。改成只藏第一层容器及其子节点：
+
+```css
+[data-dsh-fork="folded"] [data-conversation-scroll] > :first-child,
+[data-dsh-fork="folded"] [data-conversation-scroll] > :first-child > *{display:none;}
+```
+
+折叠状态挂在**我们自己拥有的 pane 根容器**上（`PaneChatTab` 返回的 `[data-dsh-pane-chat]` 加 `data-dsh-fork="folded|open"`），不改宿主、不做 DOM 手术。
+
+### 22.3 接续卡 + 自动展开
+
+- 接续卡（`[data-dsh-fork-card]`）：分叉字形 + 「接续自《原标题》」+「带入 N 轮对话 · 历史已收起/已展开」+「展开/收起历史」+「跳回原对话」（`uiWorkspace.openSession`）。N 由 fork 时数源会话 `turn/start` 得到。
+- **自动展开判据踩过一次坑**：最初用「挂载后出现 `seq > mountSeq` 的 `user/message`」，但 seed 事件在挂载后仍陆续到达，导致刚打开就误判为用户发言、折叠瞬间失效（实测第一屏就是 `open`）。改为看**会话自身状态**：`session.running === true || pendingSubmissions.length > 0` —— 只有人真的在这个面板里发消息才可能为真，与历史事件无关。
+- 折叠状态持久化在 `localStorage`（`dsh-threads:forks:v1`，200 条上限），刷新后保持；`useState(true)` 起步，避免 Session 引用解析前闪一下整段历史。
+
+### 22.4 fork 身份识别（宿主不给我们 isSeeded）
+
+`SessionWireHeader.isSeeded` 有，但 session list summary 不暴露，客户端读不到。所以插件在 fork 时自己登记 `childId → {parentId, title, turns, at, expanded}`；未登记的会话一律原生渲染，零装饰。tab 上的分叉标记（`[data-dsh-fork-tabmark]`）也由这张表驱动。
+
+### 22.5 入口：一键 guide 卡片
+
+`sidebar.right.tab.guide.entry` 是按 **`providerId`（= tab type 的 `id`）** keyed 的槽（源码 `entryKey: entry.providerId`），照抄 `dsh-client-ui-sidebar-terminal` 的写法注册自定义卡片，点击直接 fork，不再经过启动页。启动页 `PANE_START_ID` 保留但**去掉挂载即 fork**（否则恢复旧 tab 会静默造会话），只留一个「分叉对话」按钮。
+
+### 22.6 TDZ 坑（第二次踩，已定规矩）
+
+`apply()` 可能在 factory 体还没执行完时就被 Cordis 调用（热替换后的 bundle 尤其如此），于是 factory 里晚声明的 `const/let` 在 apply 路径上处于 TDZ：
+
+- 第一次：`Cannot access 'UNFORKABLE' before initialization`
+- 第二次：`Cannot access 'forkRegistry' before initialization`
+
+**规矩**：apply 路径可能触碰的 factory 级状态，一律用 `function` 声明或提升后的 `var`（`var FORK_STORE_KEY` / `var forkRegistry` + 惰性 `forks()`），绝不用 `const/let`。
+
+### 22.7 真机验证（未重启宿主，HMR 换 bundle）
+
+| 断言 | 结果 |
+|---|---|
+| guide 卡片「分叉对话」一键 | ✅ 自定义卡片 `[data-dsh-fork-guide]` 渲染，含分叉字形 + 说明 |
+| 点卡片 → 分栏在旁边，原 pane/tab 不动 | ✅ pane 1→2，原「开始」页仍在原 pane |
+| 新面板默认折叠 | ✅ `data-dsh-fork="folded"`、transcript `display:none` |
+| 折叠态 composer 可打字 | ✅ 实测输入并发送成功（修复后） |
+| 发送后自动展开 | ✅ `folded → open` |
+| 手动展开/收起 | ✅ 卡片按钮切换，文案「历史已收起/已展开」 |
+| 整页刷新后折叠态保持 | ✅ localStorage 生效 |
+| tab 分叉标记 | ✅ 仅分叉 tab 带 `[data-dsh-fork-tabmark]` |
+| 预算退化 | ✅ 第三次分叉时提示「右栏已满，已在同一栏新标签里打开分叉」 |
+
+截图：[`shots/verify-fork-v2.png`](shots/verify-fork-v2.png)
+
+### 22.8 已知边界
+
+1. 分叉会话会继承源会话的**权限/计划模式**——源会话在 plan 模式时，分叉面板的输入框也是「描述你的任务以生成计划」。这是原生 fork 的会话状态继承，不是本插件能改的。
+2. 分叉会话在左侧列表里是**普通会话**（宿主 fork 不写 `parentSession`），不会缩进到原会话下。
+3. 右栏最多 2 pane：第三次分叉只能落在同栏新 tab（已提示）。
