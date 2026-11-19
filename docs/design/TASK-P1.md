@@ -55,3 +55,31 @@
 3. 「未读 / 失败 / 等我」三态你实际用的是哪些字段（贴源码路径:行号）—— 这条最重要
 4. 与本文档不一致的真实 API
 5. 没做完的 + 原因
+
+---
+
+## 6. P1b 修正（实测后追加，2026-11-19 13:50）
+
+浏览器实测结论：**`running` 点渲染正常**（采样到 `data-dsh-pane-state="running"`）、**活标题正常**（tab 标题自动跟到宿主的「11-19 13:46 · 仅回复 OK 的指令」）；但 **`ready` / `blocked` / `waiting` 三条实际不出现**，因此 `⌘⌥Y` 也永远找不到「下一个待处理」。
+
+判断：`status.completionUnread` 在**嵌入式会话**里不可靠——面板一直挂着渲染，宿主侧很快就把它算成「已读」，所以 `ready` 条件恒假。
+
+### 要做
+
+1. **`ready` 自己数，不要读 `completionUnread`**：
+   - 每个 panechat tab 记一个 `lastSeenSeq`（该 tab 上次处于聚焦状态的时刻，取当时 `latestTurnEvent(...)` 的 `turn/end` seq）。
+   - 当 `turn/end` 的 seq > `lastSeenSeq` 且当前未运行 → `ready`。
+   - `lastSeenSeq` 存在 tab 局部状态即可（内存），不需要持久化。
+2. **`blocked`**：以 `session.promptError`/`lastAgentError` 或 `turn/end.reason.kind ∈ {error, interrupted}` 为准（现在这条链路保留即可），并**验证它真的会出现**。
+3. **`waiting`**：`pendingInteraction != null` 为准，同样要验证。
+4. `⌘⌥Y`：在①修好后，用「两个 panechat tab，一个跑完失焦」验证能跳过去；无待处理时给轻提示（已有）。
+5. 三条状态都要在回报里给**可复现的验证步骤**（我需要照着点一遍）。
+
+### 验收
+
+| # | 断言 |
+|---|---|
+| F1 | `node --check client.js` |
+| F2 | 不再依赖 `completionUnread` 判 ready（`grep -c completionUnread` 只在非 ready 路径，回报里说明） |
+| F3 | 有「聚焦即清 ready」的逻辑（`lastSeen`/`seenSeq` 之类，`grep` 给证据） |
+| F4 | 一个 commit，仅 `client.js` |
