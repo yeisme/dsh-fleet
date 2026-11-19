@@ -1,13 +1,13 @@
 # BTW 键位设计 v1（参考 Codex）
 
 > 2026-11-19 20:40。对象：`@local/dsh-threads` 的分叉面板（BTW）全部可键盘操作。
-> 两份事实来源：① DSH 客户端包里 `shortcuts.register` 的默认绑定（机器提取）；② Codex CLI 0.170 二进制里的 `TuiGlobalKeymap` 动作名与 `/side` 会话语义。
+> 三份事实来源：① DSH `⌘/` 速查面板读出的**真实占用表**（权威，含用户覆盖）；② 客户端包里 `shortcuts.register` 的默认绑定（机器提取，用于找 id 命名习惯）；③ Codex CLI 0.170 二进制里的 `TuiGlobalKeymap` 动作名与 `/side` 会话语义。
 
 ## 0. 结论先行
 
 **采用「⌥⌘ 家族 + 方向/字母」的分层，不引入 leader 键，不占用任何 ⌘ 单键。**
 
-- 分叉/合流/跳回这类**会话级**动作放 `⌥⌘` 层（`J K L` 三连，Codex 的 `toggle_side_conversation` 语义）。
+- 分叉/合流/跳回这类**会话级**动作放 `⌥⌘` 层：`J` 分叉、`⇧J` 强制另开、`L` 合流、`R` 跳回（`⌥⌘K` 被搜索会话占用，原本想要的 `J K L` 连号只能断在 K）。
 - 面板间移动放**方向键 + ⌥⌘**（Codex 的 `focus_pane_left/right`、`sidebar_up/down` 同构）。
 - 每个绑定都必须**可被用户覆盖**，并在注册时做冲突检测 + 兜底链（已在本插件 `panechat.new` 里用的模式）。
 - 已占用键一律不碰：`⌘N / ⌥⌘N / ⌘, / ⌥⌘, / ⌘/ / ⌘B / ⌥⌘B / ⌘⇧B / ⌥⌘P / ⌘T / ⌃\` / Esc / ⌘↵ / ⇧⌘A / ⌥⌘A / ⇧⌘F`。
