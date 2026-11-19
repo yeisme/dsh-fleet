@@ -152,42 +152,39 @@ window.__ModuleLoader__.load({
 
     const latestTurns = new WeakMap()
 
-    function latestTurnEvent(source) {
+    function latestTurnEvents(source) {
       const snapshot = source.getSnapshot()
       const prior = latestTurns.get(source)
-      if (prior?.revision === snapshot.revision) return prior.event
-      const isBoundary = ({ event }) => event.type === 'turn/start' || event.type === 'turn/end'
+      if (prior?.revision === snapshot.revision) return prior
+      const isEnd = ({ event }) => event.type === 'turn/end'
+      const isBoundary = (entry) => entry.event.type === 'turn/start' || isEnd(entry)
       const { change, revision } = snapshot
-      let event
-      if (prior?.revision === revision - 1 && change.kind !== 'replace') {
-        event = change.kind === 'append' ? change.entries.findLast(isBoundary)?.event ?? prior.event : prior.event
-        if (event === undefined && change.kind === 'prepend') event = change.entries.findLast(isBoundary)?.event
-      } else {
-        event = snapshot.entries.findLast(isBoundary)?.event
-      }
-      latestTurns.set(source, { revision, event })
-      return event
+      const previous = prior?.revision === revision - 1 && change.kind !== 'replace' ? prior : undefined
+      const entries = previous === undefined ? snapshot.entries
+        : change.kind === 'settle-assistant' ? [] : change.entries
+      const boundary = entries.findLast(isBoundary)?.event
+      const ending = entries.findLast(isEnd)?.event
+      const latest = change.kind === 'prepend'
+        ? { revision, boundary: previous?.boundary ?? boundary, ending: previous?.ending ?? ending }
+        : { revision, boundary: boundary ?? previous?.boundary, ending: ending ?? previous?.ending }
+      latestTurns.set(source, latest)
+      return latest
     }
 
-    function nativeAttention(status, summary, binding, seen) {
+    function paneAttention(status, summary, binding, lastSeenSeq, resource) {
       if (status?.pendingInteraction != null) return 'waiting'
+      if (resource?.status === 'failed') return 'blocked'
       const session = binding?.session.getSnapshot()
       const running = status?.running ?? session?.running ?? summary?.running
-      const turn = binding && latestTurnEvent(binding.eventSource)
+      const turn = binding && latestTurnEvents(binding.eventSource).boundary
       const reason = turn?.type === 'turn/end' ? turn.data.reason : undefined
       if (session?.promptError != null || session?.lastAgentError != null
-        || (!running && (reason?.kind === 'error' || reason?.kind === 'interrupted'
-          || (reason?.kind === 'aborted' && reason.reason?.kind === 'hook'
-            && reason.reason.reason === 'deepseek-account/signed-out')))) return 'blocked'
-      if (status?.completionUnread && !seen && (reason === undefined || reason.kind === 'completed')) return 'ready'
+        || reason?.kind === 'error' || reason?.kind === 'interrupted'
+        || (reason?.kind === 'aborted' && reason.reason?.kind === 'hook'
+          && reason.reason.reason === 'deepseek-account/signed-out')) return 'blocked'
+      if (running === false && reason !== undefined && lastSeenSeq !== undefined && turn.seq > lastSeenSeq) return 'ready'
       if (running) return 'running'
       return undefined
-    }
-
-    function activeCompletion(status, binding) {
-      if (!status?.completionUnread || binding === undefined) return undefined
-      const turn = latestTurnEvent(binding.eventSource)
-      return turn?.type === 'turn/end' ? turn.seq : undefined
     }
 
     function useObservable(source) {
@@ -224,9 +221,9 @@ window.__ModuleLoader__.load({
       return controls
     }
 
-    function registerAttentionShortcut(ctx, t, seenCompletions, feeds) {
-      ctx.inject(['sidebarRight', 'shortcuts', 'uiSession'], (scope) => {
-        const { sidebarRight, shortcuts, uiSession, sessions } = scope
+    function registerAttentionShortcut(ctx, t, paneCursors, feeds) {
+      ctx.inject(['sidebarRight', 'shortcuts', 'uiSession', 'resources'], (scope) => {
+        const { sidebarRight, shortcuts, uiSession, sessions, resources } = scope
         let notice, timer, focusFrame
         const clearNotice = () => { clearTimeout(timer); notice?.remove(); notice = undefined }
         function showNotice() {
@@ -262,9 +259,9 @@ window.__ModuleLoader__.load({
               if (kind !== 'panechat') return undefined
               const id = parsePaneAddress(contentId)
               if (id === undefined || id === owner || firstChat.get(contentId) !== tabId) return undefined
-              const binding = sessions.binding(id)
-              const status = statuses.get(id)
-              return nativeAttention(status, summaries[id], binding, seenCompletions.has(binding, activeCompletion(status, binding)))
+              const resource = resources.source(contentId).getSnapshot()
+              return paneAttention(statuses.get(id), summaries[id], sessions.binding(id),
+                paneCursors.get(owner, tabId, contentId), resource)
             })
             if (next === undefined) return showNotice()
             clearNotice()
@@ -310,20 +307,32 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function completionAcknowledgements() {
-      const seen = new WeakMap()
-      const listeners = new Set()
-      let revision = 0
+    function paneReadCursors() {
+      const owners = new Map()
       return {
-        has: (binding, completion) => completion !== undefined && seen.get(binding) === completion,
-        acknowledge(binding, completion) {
-          if (seen.get(binding) === completion) return
-          seen.set(binding, completion)
-          revision++
-          for (const listener of listeners) listener()
+        get(owner, tabId, contentId) {
+          const cursor = owners.get(owner)?.get(tabId)
+          return cursor?.contentId === contentId ? cursor.lastSeenSeq : undefined
         },
-        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
-        getSnapshot: () => revision,
+        observe(owner, tab, seq, focused) {
+          if (tab.signal.aborted) return undefined
+          let tabs = owners.get(owner)
+          if (tabs === undefined) owners.set(owner, tabs = new Map())
+          let cursor = tabs.get(tab.id)
+          if (cursor?.signal !== tab.signal || cursor.contentId !== tab.contentId) {
+            // Existing history is the baseline when a tab first acquires its event window.
+            cursor = { signal: tab.signal, contentId: tab.contentId, lastSeenSeq: seq }
+            tabs.set(tab.id, cursor)
+            const { id } = tab
+            tab.signal.addEventListener('abort', () => {
+              if (tabs.get(id) === cursor) tabs.delete(id)
+              if (tabs.size === 0 && owners.get(owner) === tabs) owners.delete(owner)
+            }, { once: true })
+          } else if (focused) {
+            cursor.lastSeenSeq = Math.max(cursor.lastSeenSeq, seq)
+          }
+          return cursor.lastSeenSeq
+        },
       }
     }
 
@@ -756,9 +765,9 @@ window.__ModuleLoader__.load({
           })()
         })
 
-        const seenCompletions = completionAcknowledgements()
-        registerPaneChat(ctx, t, seenCompletions)
-        registerAttentionShortcut(ctx, t, seenCompletions, feeds)
+        const paneCursors = paneReadCursors()
+        registerPaneChat(ctx, t, paneCursors)
+        registerAttentionShortcut(ctx, t, paneCursors, feeds)
       },
     }
 
@@ -821,7 +830,7 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function registerPaneChat(ctx, statusText, seenCompletions) {
+    function registerPaneChat(ctx, statusText, paneCursors) {
       const t = (zh, en) => ctx.locale.resolveText({ zh, en })
       const workspaceText = ctx.locale.bind('workspace')
       function titleFor(summary, fallback) {
@@ -928,8 +937,7 @@ window.__ModuleLoader__.load({
           } else if (resource.value.id === mainSessionId || (first !== undefined && first.tabId !== tab.id)) {
             content = h('p', { role: 'status' }, t('此会话已在其他位置打开', 'This chat is already open elsewhere'))
           } else {
-            content = h(SessionProvider, { session: resource.value.reference },
-              renderSlot('panechat.conversation', { visible: tab.visible }))
+            content = h(SessionProvider, { session: resource.value.reference }, renderSlot('panechat.conversation', {}))
           }
           return h('div', { 'data-dsh-pane-chat': '' }, content)
         }
@@ -939,34 +947,54 @@ window.__ModuleLoader__.load({
           key: PANECHAT_ID,
           children: { 'panechat.conversation': { kind: 'single', scope: 'session' } },
         }, PaneChatTab)), 'threads: panechat body')
-        function PaneTitle({ useResource, useSessionStatus, useSessions, useTabInfo }) {
+        const focusListeners = new Set()
+        scope.effect(() => {
+          const afterFocusChange = () => queueMicrotask(() => {
+            for (const listener of focusListeners) listener()
+          })
+          document.addEventListener('focusin', afterFocusChange)
+          document.addEventListener('focusout', afterFocusChange)
+          window.addEventListener('focus', afterFocusChange)
+          window.addEventListener('blur', afterFocusChange)
+          const unsubscribe = mounted.subscribe(afterFocusChange)
+          return () => {
+            document.removeEventListener('focusin', afterFocusChange)
+            document.removeEventListener('focusout', afterFocusChange)
+            window.removeEventListener('focus', afterFocusChange)
+            window.removeEventListener('blur', afterFocusChange)
+            unsubscribe()
+            focusListeners.clear()
+          }
+        }, 'threads: observe panechat focus')
+
+        const focusedTab = {
+          getSnapshot: () => document.hasFocus() ? scope.sidebarRight.focusedTarget()?.tabId : undefined,
+          subscribe(listener) {
+            focusListeners.add(listener)
+            return () => focusListeners.delete(listener)
+          },
+        }
+
+        function PaneTitle({ sessionId: owner, useResource, useSessionStatus, useSessions, useTabInfo }) {
           const { tab } = useTabInfo()
           const id = parsePaneAddress(tab.contentId)
           const resource = useResource(tab.contentId)
-          const binding = resource.value === undefined ? undefined : scope.sessions.binding(id)
+          const binding = scope.sessions.binding(id)
           const summary = useSessions((list) => list.byId[id])
           const status = useSessionStatus((statuses) => statuses.get(id))
-          useObservable(binding?.session)
+          const session = useObservable(binding?.session)
           useObservable(binding?.eventSource)
-          const completion = activeCompletion(status, binding)
-          useObservable(seenCompletions)
-          const seen = seenCompletions.has(binding, completion)
-          return tabCaption(titleFor(summary, tab.title), nativeAttention(status, summary, binding, seen), statusText)
-        }
-
-        function PaneConversationBody(props) {
-          const { sessionId, visible, useSessionStatus } = props
-          const binding = scope.sessions.binding(sessionId)
-          const status = useSessionStatus((statuses) => statuses.get(sessionId))
-          useObservable(binding?.eventSource)
-          const completion = activeCompletion(status, binding)
-          // The host acknowledges completions on main-view selection only.
-          // An embedded view keeps its own acknowledgement for that turn.
-          useEffect(() => {
-            if (!visible || completion === undefined) return
-            seenCompletions.acknowledge(binding, completion)
-          }, [sessionId, binding, visible, completion])
-          return PaneConversation(props)
+          const focus = useObservable(focusedTab)
+          const latestEndSeq = binding === undefined ? -1 : latestTurnEvents(binding.eventSource).ending?.seq ?? -1
+          const [, setLastSeenSeq] = useState(() => paneCursors.get(owner, tab.id, tab.contentId))
+          React.useLayoutEffect(() => {
+            if (session?.openState !== 'open') return
+            const focused = mounted.getSnapshot() === owner && focusedTab.getSnapshot() === tab.id
+            setLastSeenSeq(paneCursors.observe(owner, tab, latestEndSeq, focused))
+          }, [owner, tab.id, tab.contentId, tab.signal, focus, latestEndSeq, session?.openState])
+          const lastSeenSeq = paneCursors.get(owner, tab.id, tab.contentId)
+          const state = paneAttention(status, summary, binding, lastSeenSeq, resource)
+          return tabCaption(titleFor(summary, tab.title), state, statusText)
         }
 
         scope.effect(() => scope.slots.inject('sidebar.right.pane.tab.title', () => scope.slots.register({
@@ -975,7 +1003,7 @@ window.__ModuleLoader__.load({
         }, PaneTitle)), 'threads: panechat title')
         scope.effect(() => scope.slots.inject('panechat.conversation', () => scope.slots.register({
           name: 'panechat.conversation',
-        }, PaneConversationBody)), 'threads: panechat conversation')
+        }, PaneConversation)), 'threads: panechat conversation')
       })
 
       ctx.inject(['remote'], (scope) => {
