@@ -445,3 +445,28 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 | 宿主侧六坑 + 删 `force` 后门 | ⏳ 规格已写（`TASK-HOST-1.md`），**只改代码不重启**；重启需独立窗口 |
 | P1（状态点四态、`⌘⌥A`、标题统一） | ⏳ 未开始 |
 | P2（起手胶囊、上下文压缩、claude/codex 适配） | ⏳ 未开始 |
+
+---
+
+## 14. HOST-1 代码已落地（待重启生效，2026-11-19 13:21）
+
+提交 `01928f2 fix: 修复 DSH 线程宿主游标、进程与只读边界`（`index.js` +244 / −103，仅一个文件）。
+
+| 坑 | 修法（代码实况） |
+|---|---|
+| ① 游标到顶后 SSE 冻结 | 缓存改带**绝对序号** `total`，`after` 与 `total` 比较，不再用截断数组长度 |
+| ② 超长单行 offset 不前进 | 块内无换行时翻倍重试，`droppingLine` 保证 offset 单调前进并只 warn 一次 |
+| ③ stdout 管道满 → running 永不清 | `stdio: ['pipe','ignore','pipe']`：stdout 直接 ignore，只留 stderr |
+| ④ prompt 当 argv 传 | **改走 stdin**：`spawn('pi',['-p','--session',path,'--'])` + `child.stdin.end(text)`——比规格里的 `--` 更彻底，同时消除 ARG_MAX |
+| ⑤ interrupt 只杀直接子进程 | `detached: true` + `process.kill(-pid, signal)` 杀进程组 |
+| ⑥ bound 误判 | 只认 `agent_session.kind === 'path'`，路径 `realpath` 归一化，不确定一律偏只读 |
+| ⑦ `force` 后门 | **已删除**（`grep force` 归零），`bound` 一律 409 |
+
+**当前状态**：客户端半已由 HMR 生效；宿主半**必须重启 3081 才生效**。重启前，老宿主代码仍在跑（`force` 后门还活着），只是客户端已不再发它的用法。
+
+**重启后的回归清单**（提交者已给出可直接执行的脚本，放在任务回报里）：
+
+1. 4000 条 fixture → `after=4000`；再追加一条 → SSE 应推 `4001`（修前会永久静默）
+2. 专用 fixture 发一轮要求「输出 ≥100KiB 纯文本」→ 应正常完成且 `running` 归 false（修前会挂死在管道）
+3. 发一轮 `sleep 120 &` 记下子进程 PID → `interrupt` → `ps -p <pid>` 应无输出（修前孙子进程残留）
+4. 对 `bound:true` 的 herdr 会话发 `prompt`（**即使带 `force:true`**）→ 应 409 `attached-readonly`
