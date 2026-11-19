@@ -1684,10 +1684,18 @@ window.__ModuleLoader__.load({
 
         scope.inject(['commandUi'], (commands) => {
           commands.effect(() => {
+            // `CommandContribution.label/description` are call signatures, not
+            // plain strings: passing a string crashes the command locator
+            // ("command.label is not a function") and takes the whole shortcut
+            // registration down with it. Coerce here so a caller can never
+            // regress into that shape.
+            const asThunk = (value, fallback) => typeof value === 'function'
+              ? value
+              : () => (value === undefined ? fallback : value)
             const register = (name, label, run) => commands.commandUi.register({
               name,
-              label,
-              description,
+              label: asThunk(label, name),
+              description: asThunk(description, ''),
               available: () => scope.sidebarRight.mounted.getSnapshot() !== undefined,
               ui: { kind: 'action', run },
             })
