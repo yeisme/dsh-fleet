@@ -470,3 +470,24 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 2. 专用 fixture 发一轮要求「输出 ≥100KiB 纯文本」→ 应正常完成且 `running` 归 false（修前会挂死在管道）
 3. 发一轮 `sleep 120 &` 记下子进程 PID → `interrupt` → `ps -p <pid>` 应无输出（修前孙子进程残留）
 4. 对 `bound:true` 的 herdr 会话发 `prompt`（**即使带 `force:true`**）→ 应 409 `attached-readonly`
+
+---
+
+## 15. 宿主侧生效的自动化通道（2026-11-19 13:33 挂上）
+
+`index.js` 的修复必须重启 3081。实测当时**最近 5 分钟有 12 个会话在写**，硬重启必然打断别人；
+而「铁衣·飞书文档评论巡检」每 5 分钟一轮心跳，让「空闲 10 分钟」几乎永远不成立。所以不硬来，改成两条常驻看护：
+
+| 脚本 | 作用 | 参数 | 现状 |
+|---|---|---|---|
+| `~/yunwan/tools/dsh/idle-restart.py` | 采样所有会话文件的 mtime，**连续 3 次**满足「10 分钟无写入」才 `launchctl kickstart -k` 重启，随后按需续跑 | `--idle-minutes 10 --confirm 3 --interval 30 --snapshot-minutes 5 --max-wait-hours 14` | PID 5393，PPID=1、PGID 独立 |
+| `~/yunwan/tools/dsh/post-restart-verify.py` | 盯主实例 pid（**精确匹配 `com.yeisme.dsh-web`，不能误配 `-test`**），一变就换 token/cookie，跑 V1/V2/V3，写 `docs/design/RESTART-REGRESSION.md` 并 `notify.sh` 推送 | `--start-pid 94843 --max-wait-hours 14` | PID 11302，PGID 独立 |
+
+**为什么 `--snapshot-minutes 5` 是刻意的**：重启只在「10 分钟无人写」时触发，所以过去 5 分钟内不可能有活跃会话 → 续跑名单天然为空 → **不会像 2026-11-19 10:46 那次一样把几十个陈旧会话批量唤醒**（那次是裸跑 resume 脚本，10 秒唤醒 53 个）。
+
+**自动回归三项**（不依赖模型回合，30 秒出结论）：
+- **V1** `force` 后门：对 `bound:true` 的 herdr 会话 POST `force:true` → 必须 **409**
+- **V2** 游标不冻结：造 4000 条 fixture → `after=4000`；追加 1 条 → SSE 必须推 `>4000` 的 append（修前永久静默）
+- **V3** 只读边界：列表里 `bound:true` 仍存在且带 pane 号
+
+两个脚本都用 `os.setsid()` 脱离 DSH 进程组（macOS 没有 `setsid` 二进制，`nohup setsid ...` 会直接报错——这条已实测），否则重启时会被一起带走。
