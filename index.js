@@ -10,9 +10,10 @@
  */
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 export const name = 'threads'
 
@@ -25,6 +26,9 @@ const OWNED_DIR = join(homedir(), '.dsh', 'threads', 'pi')
 const MAX_MESSAGES = 4000
 const MAX_THREADS = 80
 const SSE_INTERVAL_MS = 600
+const READ_BLOCK_BYTES = 8 * 1024 * 1024
+const MAX_LINE_BYTES = 64 * 1024 * 1024
+const GROUP_GRACE_MS = 2000
 
 /** Host services captured for helpers that run outside a request. */
 let context
@@ -32,31 +36,49 @@ let context
 /* ------------------------------------------------------------------ discovery */
 
 /**
- * Read the workspaces herdr keeps, tolerating an absent or unreadable file.
- * @returns panes bound to an agent session file.
+ * Read herdr's path bindings and record whether their ownership is verifiable.
  */
 async function herdrPanes() {
   try {
     const raw = JSON.parse(await readFile(HERDR_STATE, 'utf8'))
     const panes = []
-    for (const workspace of raw.workspaces ?? []) {
-      for (const tab of workspace.tabs ?? []) {
-        for (const [number, pane] of Object.entries(tab.panes ?? {})) {
+    let uncertain = false
+    if (!Array.isArray(raw.workspaces)) return { panes, uncertain: true }
+    for (const workspace of raw.workspaces) {
+      if (!Array.isArray(workspace.tabs)) return { panes, uncertain: true }
+      for (const tab of workspace.tabs) {
+        if (!tab.panes || typeof tab.panes !== 'object') return { panes, uncertain: true }
+        for (const [number, pane] of Object.entries(tab.panes)) {
           const bound = pane?.agent_session
-          if (bound === undefined || bound === null || typeof bound.value !== 'string') continue
-          panes.push({
-            agent: String(bound.agent ?? 'pi'),
-            sessionPath: bound.value,
-            cwd: String(pane.cwd ?? workspace.identity_cwd ?? ''),
-            pane: String(number),
-          })
+          if (bound == null || bound.kind === 'id') continue
+          if (!(bound.kind === 'path' && typeof bound.value === 'string' && bound.value !== '')) {
+            uncertain = true
+            continue
+          }
+          const cwd = typeof pane.cwd === 'string' && isAbsolute(pane.cwd) ? pane.cwd
+            : typeof workspace.identity_cwd === 'string' ? workspace.identity_cwd : ''
+          if (!isAbsolute(bound.value) && !isAbsolute(cwd)) {
+            panes.push({ path: bound.value, canonical: bound.value, pane: number })
+            uncertain = true
+            continue
+          }
+          const path = isAbsolute(bound.value) ? bound.value : resolve(cwd, bound.value)
+          const canonical = await realpath(path).catch(() => undefined)
+          uncertain ||= canonical === undefined
+          panes.push({ path, canonical: canonical ?? path, pane: number })
         }
       }
     }
-    return panes
+    return { panes, uncertain }
   } catch {
-    return []
+    return { panes: [], uncertain: true }
   }
+}
+
+async function threadBinding(path, { panes, uncertain }) {
+  const canonical = await realpath(path).catch(() => undefined)
+  const pane = panes.find((candidate) => candidate.path === path || candidate.canonical === (canonical ?? path))
+  return { path: canonical ?? path, pane: pane?.pane ?? null, bound: pane !== undefined || uncertain || canonical === undefined }
 }
 
 /**
@@ -127,18 +149,19 @@ async function sessionMeta(path) {
 /** key -> thread descriptor. */
 const registry = new Map()
 
-/** Running child processes for threads DSH itself drives. */
+/** Session path -> running process group, including turns still being interrupted. */
 const running = new Map()
 
-/** key -> { offset, messages } */
+/** Thread key -> absolute message cursor and byte position of its current file. */
 const messageCache = new Map()
+const pendingReads = new Map()
 
 /**
  * Build the thread registry: herdr-bound sessions plus other recent sessions.
  * @returns thread descriptors, newest first.
  */
 async function discover() {
-  const panes = await herdrPanes()
+  const bindings = await herdrPanes()
   const paths = new Set(await piSessionFiles(PI_HOME))
   for (const path of await piSessionFiles(OWNED_DIR, 1)) paths.add(path)
 
@@ -155,18 +178,16 @@ async function discover() {
 
   const threads = []
   for (const item of recent.slice(0, MAX_THREADS)) {
-    const pane = panes.find((candidate) => candidate.sessionPath === item.path)
-    const meta = await sessionMeta(item.path)
+    const binding = await threadBinding(item.path, bindings)
+    const meta = await sessionMeta(binding.path)
     threads.push({
       key: `pi:${meta.id}`,
       tool: 'pi',
       id: meta.id,
-      path: item.path,
+      ...binding,
       title: meta.title,
       cwd: meta.cwd,
-      source: item.path.startsWith(OWNED_DIR) ? 'side' : pane === undefined ? 'session' : 'herdr',
-      pane: pane?.pane ?? null,
-      bound: pane !== undefined,
+      source: item.path.startsWith(OWNED_DIR) ? 'side' : binding.pane === null ? 'session' : 'herdr',
       updatedAt: item.mtimeMs,
       bytes: item.size,
     })
@@ -206,16 +227,16 @@ function textOf(message) {
 /**
  * Project one pi message entry onto the pane's message model.
  * @param entry - `message` entry from the session file.
- * @param index - position in the normalised list.
+ * @param seq - absolute sequence of the message in this thread.
  * @returns a renderable message, or undefined for system prompts.
  */
-function normalize(entry, index) {
+function normalize(entry, seq) {
   const message = entry?.message
   if (message === undefined || message === null) return undefined
   if (message.role === 'system') return undefined
   const base = {
-    seq: index,
-    id: String(entry.id ?? index),
+    seq,
+    id: String(entry.id ?? seq),
     time: Number(entry.timestamp ?? message.timestamp ?? 0),
   }
   if (message.role === 'user') {
@@ -261,47 +282,98 @@ function normalize(entry, index) {
   return { ...base, role: 'other', text: textOf(message) }
 }
 
-/**
- * Read appended bytes of one session file and normalise them.
- * @param thread - registry entry.
- * @returns its messages in file order.
- */
-async function readMessages(thread) {
-  const cache = messageCache.get(thread.key) ?? { offset: 0, messages: [] }
-  let size = 0
+async function readBlock(handle, offset, length) {
+  const buffer = Buffer.allocUnsafe(length)
+  let filled = 0
+  while (filled < length) {
+    const { bytesRead } = await handle.read(buffer, filled, length - filled, offset + filled)
+    if (bytesRead === 0) break
+    filled += bytesRead
+  }
+  return buffer.subarray(0, filled)
+}
+
+async function loadMessages(thread) {
+  const prior = messageCache.get(thread.key)
+  const handle = await open(thread.path, 'r').catch((error) => {
+    if (error.code !== 'ENOENT') throw error
+  })
+  if (handle === undefined) return prior ?? { total: 0, messages: [] }
   try {
-    size = (await stat(thread.path)).size
-  } catch {
-    return cache.messages
-  }
-  if (size > cache.offset) {
-    const length = Math.min(size - cache.offset, 8 * 1024 * 1024)
-    const handle = await open(thread.path, 'r')
-    try {
-      const buffer = Buffer.alloc(length)
-      const { bytesRead } = await handle.read(buffer, 0, length, cache.offset)
-      const lines = buffer.subarray(0, bytesRead).toString('utf8').split('\n')
-      const rest = lines.pop() ?? ''
-      for (const line of lines) {
-        if (line.trim() === '') continue
-        let entry
-        try {
-          entry = JSON.parse(line)
-        } catch {
-          continue
-        }
-        if (entry.type !== 'message') continue
-        const message = normalize(entry, cache.messages.length)
-        if (message !== undefined) cache.messages.push(message)
-      }
-      cache.offset += bytesRead - Buffer.byteLength(rest, 'utf8')
-      if (cache.messages.length > MAX_MESSAGES) cache.messages = cache.messages.slice(-MAX_MESSAGES)
-    } finally {
-      await handle.close()
+    const { size, dev, ino } = await handle.stat()
+    const cache = prior?.dev === dev && prior.ino === ino && size >= prior.scannedSize ? prior : {
+      dev, ino, offset: 0, scannedSize: -1, total: prior?.total ?? 0, messages: [], droppingLine: false, warned: false,
     }
+    messageCache.set(thread.key, cache)
+    if (size === cache.scannedSize) return cache
+
+    while (cache.offset < size) {
+      const remaining = size - cache.offset
+      let length = Math.min(remaining, READ_BLOCK_BYTES)
+      let bytes = await readBlock(handle, cache.offset, length)
+      if (bytes.length === 0) break
+      if (cache.droppingLine) {
+        const newline = bytes.indexOf(10)
+        cache.offset += newline === -1 ? bytes.length : newline + 1
+        cache.droppingLine = newline === -1
+        continue
+      }
+
+      let end = bytes.lastIndexOf(10)
+      while (end === -1 && length < Math.min(remaining, MAX_LINE_BYTES)) {
+        if (!cache.warned) {
+          context?.logger?.warn?.('threads: oversized JSONL line for %s; growing the read block up to 64 MiB', thread.key)
+          cache.warned = true
+        }
+        length = Math.min(length * 2, remaining, MAX_LINE_BYTES)
+        bytes = await readBlock(handle, cache.offset, length)
+        end = bytes.lastIndexOf(10)
+      }
+      if (end === -1) {
+        if (bytes.length < MAX_LINE_BYTES) break // still an incomplete append
+        // Skip through the next newline so the tail cannot be parsed as a new entry.
+        cache.offset += bytes.length
+        cache.droppingLine = true
+        continue
+      }
+
+      const lines = bytes.subarray(0, end).toString('utf8').split('\n')
+      const batch = []
+      for (const line of lines) {
+        let entry
+        try { entry = JSON.parse(line) } catch { continue }
+        if (entry?.type !== 'message') continue
+        const message = normalize(entry, cache.total)
+        if (message === undefined) continue
+        batch.push(message)
+        cache.total++
+      }
+      cache.messages = cache.messages.concat(batch).slice(-MAX_MESSAGES)
+      cache.offset += end + 1
+    }
+    cache.scannedSize = size
+    return cache
+  } finally {
+    await handle.close()
   }
-  messageCache.set(thread.key, cache)
-  return cache.messages
+}
+
+/** Serialize concurrent GET and SSE reads so one byte range assigns sequence numbers once. */
+async function readMessages(thread) {
+  const pending = pendingReads.get(thread.key)
+  if (pending !== undefined) return pending
+  const read = loadMessages(thread)
+  pendingReads.set(thread.key, read)
+  try { return await read } finally { pendingReads.delete(thread.key) }
+}
+
+function messagesSince({ total, messages }, after) {
+  return messages.slice(Math.max(0, after - (total - messages.length)))
+}
+
+function messageCursor(url) {
+  const after = Number(url.searchParams.get('after') ?? '0')
+  return Number.isSafeInteger(after) && after >= 0 ? after : 0
 }
 
 /* ----------------------------------------------------------------- operations */
@@ -313,23 +385,78 @@ async function readMessages(thread) {
  * @returns the child process.
  */
 function startTurn(thread, text) {
-  const child = spawn('pi', ['-p', '--session', thread.path, text], {
+  // Pi print mode consumes piped stdin as the initial message.
+  const child = spawn('pi', ['-p', '--session', thread.path, '--'], {
     cwd: thread.cwd === '' ? homedir() : thread.cwd,
     env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+    stdio: ['pipe', 'ignore', 'pipe'],
   })
   const state = { child, stderr: '' }
+  running.set(thread.path, state)
+  const clear = () => {
+    clearInterval(state.reapTimer)
+    if (running.get(thread.path) === state) running.delete(thread.path)
+  }
+  state.clear = clear
   child.stderr?.on('data', (chunk) => { state.stderr = (state.stderr + String(chunk)).slice(-4000) })
-  running.set(thread.key, state)
-  child.on('exit', (code) => {
-    running.delete(thread.key)
-    if (code !== 0) context?.logger?.warn?.('threads: pi turn exited %s for %s: %s', String(code), thread.key, state.stderr.slice(-500))
+  child.once('exit', () => {
+    if (running.get(thread.path) !== state) return
+    if (!groupAlive(child.pid)) clear()
+    else state.reapTimer = setInterval(() => { if (!groupAlive(child.pid)) clear() }, 250).unref()
   })
-  child.on('error', (error) => {
-    running.delete(thread.key)
+  child.once('close', (code, signal) => {
+    if (code !== 0 && state.interrupt === undefined && child.pid !== undefined) {
+      context?.logger?.warn?.('threads: pi turn exited %s for %s: %s', signal ?? String(code), thread.key, state.stderr.slice(-500))
+    }
+  })
+  child.once('error', (error) => {
+    if (child.pid === undefined) clear()
     context?.logger?.warn?.('threads: pi spawn failed for %s: %s', thread.key, String(error?.message ?? error))
   })
+  child.stdin.on('error', (error) => {
+    if (child.pid !== undefined && state.interrupt === undefined) {
+      context?.logger?.warn?.('threads: pi stdin failed for %s: %s', thread.key, String(error?.message ?? error))
+    }
+  })
+  child.stdin.end(text, 'utf8')
   return child
+}
+
+function signalGroup(pid, signal) {
+  if (pid === undefined) return false
+  try {
+    process.kill(-pid, signal)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+function groupAlive(pid) {
+  try { return signalGroup(pid, 0) } catch { return true }
+}
+
+async function waitForGroupExit(pid) {
+  const deadline = performance.now() + GROUP_GRACE_MS
+  while (groupAlive(pid)) {
+    if (performance.now() >= deadline) return false
+    await delay(50)
+  }
+  return true
+}
+
+async function interruptTurn(state) {
+  const { pid } = state.child
+  const interrupted = signalGroup(pid, 'SIGTERM')
+  if (interrupted && !await waitForGroupExit(pid)) {
+    if (signalGroup(pid, 'SIGKILL') && !await waitForGroupExit(pid)) {
+      throw new Error('pi process group still running after SIGKILL')
+    }
+  }
+  state.clear()
+  return interrupted
 }
 
 /**
@@ -338,13 +465,14 @@ function startTurn(thread, text) {
  * @param cwd - working directory.
  * @returns the descriptor, before pi writes the header.
  */
-function ownedThread(text, cwd) {
+async function ownedThread(text, cwd) {
+  const directory = await realpath(OWNED_DIR)
   const id = randomUUID()
   return {
     key: `pi:${id}`,
     tool: 'pi',
     id,
-    path: join(OWNED_DIR, `${new Date().toISOString().replace(/[:.]/gu, '-')}_${id}.jsonl`),
+    path: join(directory, `${new Date().toISOString().replace(/[:.]/gu, '-')}_${id}.jsonl`),
     title: text === '' ? '侧问' : text.replace(/\s+/gu, ' ').slice(0, 80),
     cwd,
     source: 'side',
@@ -429,7 +557,7 @@ function view(thread) {
     pane: thread.pane,
     bound: thread.bound,
     updatedAt: thread.updatedAt,
-    running: running.has(thread.key),
+    running: running.has(thread.path),
   }
 }
 
@@ -483,11 +611,11 @@ export function apply(ctx) {
     GET: async (request, response) => {
       const url = new URL(request.url ?? '/', 'http://localhost')
       const key = url.searchParams.get('key') ?? ''
-      const after = Math.max(0, Number(url.searchParams.get('after') ?? '0'))
+      const after = messageCursor(url)
       const thread = await lookup(key)
       if (thread === undefined) return json(response, 404, { ok: false, reason: 'unknown-thread' })
-      const messages = await readMessages(thread)
-      json(response, 200, { ok: true, ...view(thread), after: messages.length, messages: messages.slice(after) })
+      const cache = await readMessages(thread)
+      json(response, 200, { ok: true, ...view(thread), after: cache.total, messages: messagesSince(cache, after > cache.total ? 0 : after) })
     },
   })
 
@@ -495,7 +623,7 @@ export function apply(ctx) {
     GET: async (request, response) => {
       const url = new URL(request.url ?? '/', 'http://localhost')
       const key = url.searchParams.get('key') ?? ''
-      let after = Math.max(0, Number(url.searchParams.get('after') ?? '0'))
+      let after = messageCursor(url)
       const thread = await lookup(key)
       if (thread === undefined) return json(response, 404, { ok: false, reason: 'unknown-thread' })
 
@@ -508,23 +636,39 @@ export function apply(ctx) {
       const send = (event, data) => {
         response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
       }
+      let lastRunning = running.has(thread.path)
+      let pushing = false
+      let closed = false
       const push = async () => {
-        const messages = await readMessages(thread)
-        if (messages.length < after) after = 0
-        if (messages.length > after) {
-          send('append', { messages: messages.slice(after), after: messages.length, running: running.has(thread.key) })
-          after = messages.length
+        if (closed || pushing || response.writableNeedDrain) return
+        pushing = true
+        try {
+          const cache = await readMessages(thread)
+          if (closed) return
+          const active = running.has(thread.path)
+          if (after > cache.total) after = 0
+          if (cache.total > after || active !== lastRunning) {
+            send('append', { messages: messagesSince(cache, after), after: cache.total, running: active })
+            after = cache.total
+            lastRunning = active
+          }
+        } catch (error) {
+          ctx.logger?.warn?.('threads: stream failed for %s: %s', thread.key, String(error?.message ?? error))
+          stop()
+        } finally {
+          pushing = false
         }
       }
-      send('ready', { ...view(thread), after })
-      await push()
       const timer = setInterval(() => { void push() }, SSE_INTERVAL_MS)
       const stop = () => {
+        if (closed) return
+        closed = true
         clearInterval(timer)
         try { response.end() } catch { /* already closed */ }
       }
-      request.on('close', stop)
-      response.on('close', stop)
+      response.once('close', stop)
+      send('ready', { ...view(thread), after })
+      await push()
     },
   })
 
@@ -533,17 +677,18 @@ export function apply(ctx) {
       const payload = await readJson(request)
       const thread = await lookup(String(payload?.key ?? ''))
       if (thread === undefined) return json(response, 404, { ok: false, reason: 'unknown-thread' })
-      const text = String(payload?.text ?? '').trim()
-      if (text === '') return json(response, 400, { ok: false, reason: 'empty-prompt' })
-      if (running.has(thread.key)) return json(response, 409, { ok: false, reason: 'turn-running' })
-      if (thread.bound && payload?.force !== true) {
+      const binding = await threadBinding(thread.path, await herdrPanes())
+      if (binding.bound) {
         return json(response, 409, {
           ok: false,
           reason: 'attached-readonly',
           detail: '该会话由外部终端（herdr 面板）持有，只能只读，或分叉后继续。',
         })
       }
-      startTurn(thread, text)
+      const text = String(payload?.text ?? '').trim()
+      if (text === '') return json(response, 400, { ok: false, reason: 'empty-prompt' })
+      if (running.has(binding.path)) return json(response, 409, { ok: false, reason: 'turn-running' })
+      startTurn({ ...thread, ...binding }, text)
       json(response, 202, { ok: true, accepted: true })
     },
   })
@@ -563,15 +708,11 @@ export function apply(ctx) {
     POST: async (request, response) => {
       const payload = await readJson(request)
       const key = String(payload?.key ?? '')
-      const state = running.get(key)
+      const state = running.get(registry.get(key)?.path)
       if (state === undefined) return json(response, 200, { ok: true, interrupted: false })
-      try {
-        state.child.kill('SIGTERM')
-      } catch {
-        /* already gone */
-      }
-      running.delete(key)
-      json(response, 200, { ok: true, interrupted: true })
+      state.interrupt ??= interruptTurn(state).finally(() => { state.interrupt = undefined })
+      const interrupted = await state.interrupt
+      json(response, 200, { ok: true, interrupted })
     },
   })
 
@@ -581,7 +722,7 @@ export function apply(ctx) {
       await mkdir(OWNED_DIR, { recursive: true })
       const text = String(payload?.text ?? '').trim()
       const cwd = String(payload?.cwd ?? process.cwd())
-      const thread = ownedThread(text, cwd)
+      const thread = await ownedThread(text, cwd)
       registry.set(thread.key, thread)
       if (text !== '') startTurn(thread, text)
       await discover()
@@ -598,7 +739,7 @@ export function apply(ctx) {
    */
   async function openSideThread(text) {
     await mkdir(OWNED_DIR, { recursive: true })
-    const thread = ownedThread(text, process.cwd()) // title = the user's own words
+    const thread = await ownedThread(text, process.cwd()) // title = the user's own words
     registry.set(thread.key, thread)
     startTurn(thread, `【侧问·只回答、不改文件；三句内】${text}`)
     // pi writes its own session identity into the file, so wait for it and report
