@@ -1,9 +1,8 @@
 /**
  * Client half of `@local/dsh-threads`.
  *
- * One right-Sidebar tab type renders an attached thread: the conversation of a
- * `pi` session (herdr pane, disk session, or a DSH-owned side thread) streamed
- * from the host routes. The pane is the only UI; there is no terminal page.
+ * The right Sidebar hosts native DSH chats and read-only pi threads streamed
+ * from the host routes (herdr panes, disk sessions, or DSH-owned side threads).
  */
 window.__ModuleLoader__.load({
   id: '@local/dsh-threads',
@@ -61,15 +60,6 @@ window.__ModuleLoader__.load({
       return await call(`/plugin/threads/messages?key=${encodeURIComponent(key)}&after=${after}`)
     }
 
-    /** @param key - thread key. @param text - prompt body. @param force - continue an attached session. */
-    async function sendPrompt(key, text, force) {
-      return await call('/plugin/threads/prompt', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key, text, force: force === true }),
-      })
-    }
-
     /** @param key - thread key. */
     async function forkThread(key) {
       return await call('/plugin/threads/fork', {
@@ -79,13 +69,26 @@ window.__ModuleLoader__.load({
       })
     }
 
-    /** @param key - thread key. */
-    async function interruptThread(key) {
-      return await call('/plugin/threads/interrupt', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key }),
-      })
+    function threadContext(messages) {
+      const head = '<外部会话上下文>\n'
+      const tail = '</外部会话上下文>\n\n以下是接着上面这条外部会话继续的工作：'
+      const limit = 8000
+      const lines = messages.filter(({ role, text }) => (role === 'user' || role === 'assistant') && text.trim() !== '')
+        .slice(-20).map(({ role, text }) => '[' + role + '] ' + text.trim() + '\n')
+      let body = lines.join('')
+      if (head.length + body.length + tail.length <= limit) return head + body + tail
+
+      const note = () => '\n（已截断，仅保留最近 ' + lines.length + ' 条）'
+      while (lines.length > 1 && head.length + body.length + tail.length + note().length > limit) {
+        body = body.slice(lines.shift().length)
+      }
+      const available = limit - head.length - tail.length - note().length
+      if (body.length > available) {
+        const label = body.slice(0, body.indexOf('] ') + 2)
+        const end = body.slice(-(available - label.length)).replace(/^[\uDC00-\uDFFF]/u, '')
+        body = label + end
+      }
+      return head + body + tail + note()
     }
 
     /* ----------------------------------------------------------------- markdown */
@@ -144,46 +147,40 @@ window.__ModuleLoader__.load({
         threads: '线程列表',
         empty: '选择一个线程开始查看。',
         loading: '读取中…',
-        readonly: '该线程由外部终端持有：只读。可「分叉」出一条自己接管的线程继续聊。',
+        readonly: '只读',
         fork: '分叉继续',
-        stop: '停止',
-        send: '发送',
-        sent: '已发送',
+        follow: '接着问 → 开新会话',
+        copy: '复制上下文',
+        copied: '已复制',
+        unavailable: '会话面板当前不可用',
         thinking: '推理过程',
         tools: '工具调用',
         result: '结果',
         error: '失败',
-        placeholder: '追问这个线程…',
-        cwd: '目录',
         herdr: 'herdr',
         session: '磁盘会话',
         side: '侧线',
         running: '运行中',
-        attached: '外部持有',
-        noComposer: '该会话不能从这里写入。',
       },
       en: {
         pane: 'Threads',
         threads: 'Threads',
         empty: 'Pick a thread to watch.',
         loading: 'Loading…',
-        readonly: 'An external terminal owns this thread: read-only. Fork it to take over.',
+        readonly: 'Read-only',
         fork: 'Fork & continue',
-        stop: 'Stop',
-        send: 'Send',
-        sent: 'Sent',
+        follow: 'Follow up → New chat',
+        copy: 'Copy context',
+        copied: 'Copied',
+        unavailable: 'Chat panels are unavailable',
         thinking: 'Reasoning',
         tools: 'Tool calls',
         result: 'Result',
         error: 'Failed',
-        placeholder: 'Ask this thread…',
-        cwd: 'cwd',
         herdr: 'herdr',
         session: 'on disk',
         side: 'side',
         running: 'running',
-        attached: 'external',
-        noComposer: 'This session cannot be driven from here.',
       },
     }
 
@@ -218,23 +215,17 @@ window.__ModuleLoader__.load({
 [data-dsh-thread-tool] b{font-weight:500;color:var(--dsw-alias-label-primary);}
 [data-dsh-thread-tool] pre{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow-y:auto;font-size:11.5px;line-height:1.55;color:var(--dsw-alias-label-secondary);}
 [data-dsh-thread-meta]{font-size:11px;color:var(--dsw-alias-label-secondary);}
-[data-dsh-thread-composer]{flex:none;border-top:1px solid var(--dsw-alias-border-l1);padding:8px 10px 10px;display:flex;flex-direction:column;gap:6px;}
-[data-dsh-thread-notice]{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+[data-dsh-thread-actions]{flex:none;border-top:1px solid var(--dsw-alias-border-l1);padding:8px 10px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+[data-dsh-thread-notice]{flex-basis:100%;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);}
 [data-dsh-thread-error]{font-size:11.5px;color:var(--dsw-alias-state-error-primary);}
-[data-dsh-thread-box]{display:flex;align-items:flex-end;gap:6px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);padding:6px 6px 6px 10px;}
-[data-dsh-thread-box]:focus-within{border-color:var(--dsw-alias-border-l2);}
-[data-dsh-thread-input]{flex:1;min-width:0;border:none;outline:none;resize:none;background:transparent;color:inherit;font:inherit;font-size:13px;line-height:1.55;max-height:240px;padding:4px 0;}
-[data-dsh-thread-send]{flex:none;height:28px;min-width:28px;padding:0 10px;border-radius:9px;border:none;
-  background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);font:inherit;font-size:12px;
-  font-weight:500;cursor:pointer;}
-[data-dsh-thread-send][disabled]{opacity:.45;cursor:default;}
-[data-dsh-thread-stop]{flex:none;height:28px;padding:0 10px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer;}
+[data-dsh-thread-action]{min-height:28px;padding:3px 8px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer;}
+[data-dsh-thread-action="primary"]{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);font-weight:500;}
+[data-dsh-thread-action]:disabled{opacity:.45;cursor:default;}
 [data-dsh-thread-picker]{position:absolute;inset:auto 10px auto 10px;top:44px;z-index:30;max-height:60%;overflow-y:auto;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.28);padding:4px;}
 [data-dsh-thread-row]{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;border:none;background:transparent;color:inherit;font:inherit;font-size:12.5px;padding:7px 8px;border-radius:7px;cursor:pointer;}
 [data-dsh-thread-row]:hover{background:var(--dsw-alias-bg-layer-2);}
 [data-dsh-thread-row] span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
 [data-dsh-thread-row] span:last-child{color:var(--dsw-alias-label-secondary);font-size:11px;flex:none;}
-@media (prefers-reduced-motion:reduce){[data-dsh-thread-send]{transition:none;}}
 `
 
     /* -------------------------------------------------------------------- plugin */
@@ -242,8 +233,7 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale', 'sessions'],
       apply(ctx) {
-        const lang = (ctx.locale.getLocale?.()?.id ?? 'zh').startsWith('en') ? 'en' : 'zh'
-        const t = (key) => T[lang][key] ?? T.zh[key] ?? key
+        const t = (key) => ctx.locale.resolveText({ zh: T.zh[key], en: T.en[key] })
 
         ctx.effect(() => {
           const style = document.createElement('style')
@@ -260,50 +250,52 @@ window.__ModuleLoader__.load({
           scope.effect(() => () => { sidebarRight = undefined }, 'threads: sidebar handle')
         })
 
+        let openFollowUp
+        ctx.inject(['conversation', 'remote'], (scope) => {
+          openFollowUp = (tab, cwd, draft) => openPane(scope, cwd || '~',
+            (address) => tab.actions.openResource(address), { draft, signal: tab.signal })
+          scope.effect(() => () => { openFollowUp = undefined }, 'threads: follow-up action')
+        })
+
         /** One attached thread, streamed from the host. */
         function ThreadPane(props) {
           const tab = props.useTabInfo().tab
           const key = parseThreadAddress(tab.contentId)
           const [threads, setThreads] = useState([])
           const [listOpen, setListOpen] = useState(false)
-          const [meta, setMeta] = useState({ title: '', source: '', bound: false, running: false, cwd: '' })
+          const [meta, setMeta] = useState({ title: '', source: '', running: false, cwd: '' })
           const [messages, setMessages] = useState([])
-          const [draft, setDraft] = useState('')
           const [notice, setNotice] = useState('')
           const [failure, setFailure] = useState('')
-          const [sending, setSending] = useState(false)
+          const [opening, setOpening] = useState(false)
+          const [loaded, setLoaded] = useState(false)
           const scrollRef = useRef(null)
           const stickRef = useRef(true)
-          const draftKey = key === undefined ? 'thread' : `dsh.threads.draft:${key}`
+          const copyTimer = useRef(undefined)
 
-          // Draft survives tab switches and reloads.
-          useEffect(() => {
-            try { setDraft(window.localStorage.getItem(draftKey) ?? '') } catch { setDraft('') }
-          }, [draftKey])
-          useEffect(() => {
-            try {
-              if (draft === '') window.localStorage.removeItem(draftKey)
-              else window.localStorage.setItem(draftKey, draft)
-            } catch { /* storage may be disabled */ }
-          }, [draft, draftKey])
+          useEffect(() => () => clearTimeout(copyTimer.current), [])
 
           // Initial read plus the live stream.
           useEffect(() => {
             if (key === undefined) return undefined
-            let after = 0
             let closed = false
+            setLoaded(false)
             setMessages([])
             void readMessages(key, 0).then((payload) => {
-              if (closed || payload?.ok !== true) return
-              after = payload.after ?? 0
-              setMeta({ title: payload.title ?? '', source: payload.source ?? '', bound: payload.bound === true, running: payload.running === true, cwd: payload.cwd ?? '' })
-              setMessages(payload.messages ?? [])
+              if (closed) return
+              if (payload?.ok !== true) throw new Error(payload?.reason ?? 'thread-read-failed')
+              setMeta({ title: payload.title ?? '', source: payload.source ?? '', running: payload.running === true, cwd: payload.cwd ?? '' })
+              const initial = payload.messages ?? []
+              const ids = new Set(initial.map((message) => message.id))
+              setMessages((previous) => [...initial, ...previous.filter((message) => !ids.has(message.id))])
+              setLoaded(true)
+            }).catch((error) => {
+              if (!closed) setFailure(String(error?.message ?? error))
             })
             const source = new EventSource(`/plugin/threads/stream?key=${encodeURIComponent(key)}&after=0`)
             source.addEventListener('ready', (event) => {
               const data = JSON.parse(event.data)
-              after = data.after ?? after
-              setMeta({ title: data.title ?? '', source: data.source ?? '', bound: data.bound === true, running: data.running === true, cwd: data.cwd ?? '' })
+              setMeta({ title: data.title ?? '', source: data.source ?? '', running: data.running === true, cwd: data.cwd ?? '' })
             })
             source.addEventListener('append', (event) => {
               const data = JSON.parse(event.data)
@@ -314,7 +306,6 @@ window.__ModuleLoader__.load({
                   return added.length === 0 ? previous : [...previous, ...added]
                 })
               }
-              after = data.after ?? after
               setMeta((previous) => ({ ...previous, running: data.running === true }))
             })
             source.onerror = () => { /* reconnect is automatic */ }
@@ -348,27 +339,32 @@ window.__ModuleLoader__.load({
             }
           }
 
-          const submit = async (force) => {
-            const text = draft.trim()
-            if (text === '' || key === undefined) return
-            setSending(true)
+          const followUp = async () => {
+            if (opening || !loaded) return
+            setOpening(true)
             setFailure('')
-            const result = await sendPrompt(key, text, force)
-            setSending(false)
-            if (result?.ok === true) {
-              setDraft('')
-              setNotice(t('sent'))
-              setMeta((previous) => ({ ...previous, running: true }))
-              window.setTimeout(() => { setNotice('') }, 1500)
-              return
+            try {
+              if (openFollowUp === undefined) throw new Error(t('unavailable'))
+              await openFollowUp(tab, meta.cwd, threadContext(messages))
+            } catch (error) {
+              if (!tab.signal.aborted) setFailure(String(error?.message ?? error))
+            } finally {
+              if (!tab.signal.aborted) setOpening(false)
             }
-            setFailure(result?.detail ?? result?.reason ?? 'failed')
           }
 
-          const stop = async () => {
-            if (key === undefined) return
-            await interruptThread(key)
-            setMeta((previous) => ({ ...previous, running: false }))
+          const copyContext = async () => {
+            if (!loaded) return
+            setFailure('')
+            try {
+              await navigator.clipboard.writeText(threadContext(messages))
+              if (tab.signal.aborted) return
+              clearTimeout(copyTimer.current)
+              setNotice(t('copied'))
+              copyTimer.current = setTimeout(() => setNotice(''), 1500)
+            } catch (error) {
+              if (!tab.signal.aborted) setFailure(String(error?.message ?? error))
+            }
           }
 
           const doFork = async () => {
@@ -385,13 +381,13 @@ window.__ModuleLoader__.load({
             return h('div', { 'data-dsh-thread': '' }, h('div', { 'data-dsh-thread-head': '' }, t('empty')))
           }
 
-          const readonly = meta.bound === true
+          const source = meta.source === 'herdr' ? t('herdr') : meta.source === 'side' ? t('side') : t('session')
 
           return h('div', { 'data-dsh-thread': '', style: { position: 'relative' } },
             h('div', { 'data-dsh-thread-head': '' },
               h('div', { 'data-dsh-thread-title': '', title: meta.cwd }, meta.title === '' ? t('pane') : meta.title),
               h('span', { 'data-dsh-thread-badge': '', 'data-tone': meta.running ? 'run' : '' },
-                meta.running ? t('running') : meta.source === 'herdr' ? t('herdr') : meta.source === 'side' ? t('side') : t('session')),
+                ['⧉ ' + t('readonly'), source, ...(meta.running ? [t('running')] : [])].join(' · ')),
               h('button', { type: 'button', 'data-dsh-thread-list-btn': '', onClick: loadList }, t('threads')),
             ),
             listOpen && h('div', { 'data-dsh-thread-picker': '' },
@@ -411,42 +407,16 @@ window.__ModuleLoader__.load({
                 stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40
               },
             },
-            messages.length === 0 ? h('div', { 'data-dsh-thread-meta': '' }, t('loading')) : null,
+            !loaded && messages.length === 0 ? h('div', { 'data-dsh-thread-meta': '' }, t('loading')) : null,
             messages.map((message) => h(Message, { key: `${message.seq}-${message.id}`, message, t }))),
-            h('div', { 'data-dsh-thread-composer': '' },
-              readonly && h('div', { 'data-dsh-thread-notice': '' },
-                h('span', null, t('readonly')),
-                h('button', { type: 'button', 'data-dsh-thread-list-btn': '', onClick: () => { void doFork() } }, t('fork'))),
-              failure !== '' && h('div', { 'data-dsh-thread-error': '' }, `${t('error')}：${failure}`),
-              notice !== '' && h('div', { 'data-dsh-thread-notice': '' }, notice),
-              h('div', { 'data-dsh-thread-box': '' },
-                h('textarea', {
-                  'data-dsh-thread-input': '',
-                  rows: 1,
-                  value: draft,
-                  placeholder: readonly ? t('noComposer') : t('placeholder'),
-                  disabled: readonly,
-                  onChange: (event) => {
-                    setDraft(event.target.value)
-                    const node = event.target
-                    node.style.height = 'auto'
-                    node.style.height = `${Math.min(node.scrollHeight, 240)}px`
-                  },
-                  onKeyDown: (event) => {
-                    if (event.key !== 'Enter' || event.shiftKey) return
-                    if (event.nativeEvent?.isComposing === true || event.isComposing === true) return
-                    event.preventDefault()
-                    if (!readonly) void submit(false)
-                  },
-                }),
-                meta.running
-                  ? h('button', { type: 'button', 'data-dsh-thread-stop': '', onClick: () => { void stop() } }, t('stop'))
-                  : h('button', {
-                    type: 'button',
-                    'data-dsh-thread-send': '',
-                    disabled: readonly || sending || draft.trim() === '',
-                    onClick: () => { void submit(false) },
-                  }, t('send')))))
+            h('div', { 'data-dsh-thread-actions': '' },
+              h('button', { type: 'button', 'data-dsh-thread-action': 'primary', disabled: opening || !loaded,
+                onClick: () => { void followUp() } }, t('follow')),
+              h('button', { type: 'button', 'data-dsh-thread-action': '', disabled: !loaded,
+                onClick: () => { void copyContext() } }, t('copy')),
+              h('button', { type: 'button', 'data-dsh-thread-action': '', onClick: () => { void doFork() } }, t('fork')),
+              failure !== '' && h('div', { role: 'alert', 'data-dsh-thread-error': '' }, t('error') + '：' + failure),
+              notice !== '' && h('div', { role: 'status', 'data-dsh-thread-notice': '' }, notice)))
         }
 
         /** One transcript row. */
@@ -575,6 +545,35 @@ window.__ModuleLoader__.load({
         { slots: { views: FixedPaneChatView } })
     }
 
+    async function createPaneSession(scope, cwd) {
+      const directory = cwd.trim()
+      if (directory === '~' || directory.startsWith('~/')) {
+        const home = scope.remote.$host.home
+        if (home === undefined) throw new Error(scope.locale.resolveText({
+          zh: '宿主主目录尚不可用', en: 'The host home directory is unavailable',
+        }))
+        return scope.sessions.create({ cwd: home + directory.slice(1) })
+      }
+      return scope.sessions.create({ cwd: directory })
+    }
+
+    async function openPane(scope, cwd, open, { draft, signal } = {}) {
+      signal?.throwIfAborted()
+      const id = await createPaneSession(scope, cwd)
+      const address = paneAddress(id)
+      if (draft === undefined) {
+        open(address)
+        return
+      }
+      // Keep the exact target scope alive until its editor owns the draft.
+      await scope.sessions.using(id, { source: 'paneChat', signal }, (reference) => {
+        signal?.throwIfAborted()
+        const input = scope.conversation.input.for(reference.binding.ctx)
+        open(address)
+        input.setDraft(draft)
+      })
+    }
+
     function registerPaneChat(ctx) {
       const t = (zh, en) => ctx.locale.resolveText({ zh, en })
       const title = () => t('会话', 'Chat')
@@ -599,16 +598,6 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style)
         return () => { style.remove() }
       }, 'threads: panechat styles')
-
-      async function createPaneSession(scope, cwd) {
-        const directory = cwd.trim()
-        if (directory === '~' || directory.startsWith('~/')) {
-          const home = scope.remote.$host.home
-          if (home === undefined) throw new Error(t('宿主主目录尚不可用', 'The host home directory is unavailable'))
-          return scope.sessions.create({ cwd: home + directory.slice(1) })
-        }
-        return scope.sessions.create({ cwd: directory })
-      }
 
       ctx.inject(['resources'], (scope) => {
         scope.effect(() => scope.resources.register({
@@ -738,33 +727,73 @@ window.__ModuleLoader__.load({
         }, PaneStart)), 'threads: panechat launch body')
       })
 
-      ctx.inject(['commandUi', 'conversation', 'sidebarRight', 'remote'], (scope) => {
+      ctx.inject(['conversation', 'sidebarRight', 'remote'], (scope) => {
         const pending = new Set()
-        async function openFromCommand({ sessionId }) {
-          const owner = scope.sidebarRight.mounted.getSnapshot()
-          if (owner === undefined || pending.has(owner)) return
+        async function openFromCurrent(owner, cwd, noticeSession = owner) {
+          if (scope.sidebarRight.mounted.getSnapshot() !== owner || pending.has(owner)) return
           pending.add(owner)
           try {
-            const cwd = scope.sessions.list.getSnapshot().byId[sessionId]?.cwd || '~'
-            const id = await createPaneSession(scope, cwd)
-            if (scope.sidebarRight.mounted.getSnapshot() !== owner) {
-              throw new Error(t('会话已创建，右栏已切换', 'Chat created, but the active sidebar has changed'))
-            }
-            scope.sidebarRight.openResource(paneAddress(id))
+            await openPane(scope, cwd, (address) => {
+              if (scope.sidebarRight.mounted.getSnapshot() !== owner) {
+                throw new Error(t('会话已创建，右栏已切换', 'Chat created, but the active sidebar has changed'))
+              }
+              scope.sidebarRight.openResource(address)
+            })
           } catch (error) {
-            const actx = scope.sessions.scope(sessionId)
+            const actx = scope.sessions.scope(noticeSession)
             if (actx !== undefined) scope.conversation.input.for(actx).notify('error', failureText(error))
           } finally {
             pending.delete(owner)
           }
         }
-        scope.effect(() => scope.commandUi.register({
-          name: 'panechat',
-          label: startTitle,
-          description,
-          available: () => scope.sidebarRight.mounted.getSnapshot() !== undefined,
-          ui: { kind: 'action', run: (session) => { void openFromCommand(session) } },
-        }), 'threads: /panechat')
+
+        scope.inject(['commandUi'], (commands) => {
+          commands.effect(() => commands.commandUi.register({
+            name: 'panechat',
+            label: startTitle,
+            description,
+            available: () => scope.sidebarRight.mounted.getSnapshot() !== undefined,
+            ui: { kind: 'action', run: ({ sessionId }) => {
+              const owner = scope.sidebarRight.mounted.getSnapshot()
+              if (owner === undefined) return
+              const cwd = scope.sessions.list.getSnapshot().byId[sessionId]?.cwd || '~'
+              void openFromCurrent(owner, cwd, sessionId)
+            } },
+          }), 'threads: /panechat')
+        })
+
+        scope.inject(['shortcuts'], (keyboard) => {
+          keyboard.effect(() => {
+            const shortcuts = keyboard.shortcuts
+            const register = (binding) => shortcuts.register({
+              id: 'panechat.new',
+              label: startTitle,
+              aliases: ['new pane', 'new chat panel'],
+              defaults: {
+                'desktop:macos': binding, 'desktop:windows': binding, 'desktop:linux': binding,
+                'web:macos': binding, 'web:windows': binding,
+              },
+              regions: ['page', 'editable', 'terminal'],
+              modals: [],
+              resolve: () => {
+                const owner = scope.sidebarRight.mounted.getSnapshot()
+                const cwd = owner === undefined ? undefined : scope.sessions.list.getSnapshot().byId[owner]?.cwd?.trim()
+                if (!cwd) return { status: 'blocked', reason: t('当前主会话没有可用目录', 'No directory for the current main chat') }
+                return { status: 'handled', run: () => { void openFromCurrent(owner, cwd) } }
+              },
+            })
+            const binding = { code: 'KeyJ', modifiers: ['primary', 'alt'] }
+            const fallback = { ...binding, code: 'KeyU' }
+            const { issue, conflicts } = shortcuts.describeBinding(binding)
+            if (issue !== null || conflicts.length > 0) return register(fallback)
+            try {
+              return register(binding)
+            } catch (error) {
+              if (!failureText(error).startsWith('Conflicting shortcut defaults:')) throw error
+              return register(fallback)
+            }
+          }, 'threads: new pane shortcut')
+        })
       })
     }
   },
