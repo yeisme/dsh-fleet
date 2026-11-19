@@ -491,3 +491,23 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 - **V3** 只读边界：列表里 `bound:true` 仍存在且带 pane 号
 
 两个脚本都用 `os.setsid()` 脱离 DSH 进程组（macOS 没有 `setsid` 二进制，`nohup setsid ...` 会直接报错——这条已实测），否则重启时会被一起带走。
+
+---
+
+## 16. 实测：四态状态点只有 `running` 能用（P1 教训，2026-11-19 13:50）
+
+浏览器实测（真页面、真回合）：
+
+| 态 | 结果 | 说明 |
+|---|---|---|
+| `running` | ✅ 能用 | 发出消息后 100ms 采样 5 秒，抓到 `data-dsh-pane-state="running"` |
+| 活标题 | ✅ 能用 | tab 标题自动跟到宿主生成的会话标题「11-19 13:46 · 仅回复 OK 的指令」 |
+| `ready` | ❌ 从不出现 | 判定读的是 `status.completionUnread` |
+| `blocked` / `waiting` | ❌ 未观察到 | 同样依赖宿主状态位 |
+| `⌘⌥Y` 跳待处理 | ❌ 无目标 | 三条待处理态都出不来，注意力队列恒空 |
+
+**根因**：`completionUnread` 是给**侧栏会话行**用的「未读」概念。嵌入在面板里的会话一直挂着渲染，宿主很快把它算成已读 → `ready` 条件恒假。**面板要用自己的 `lastSeenSeq`**：每个 tab 记「上次聚焦时的 `turn/end` seq」，之后再有 `turn/end` 且 seq 更大、且当前不在跑 → `ready`；聚焦即刷新。
+
+**可复用结论**：`conversation.content` 的 embedded 变体只保证「渲染 + 原生输入」，**不保证宿主侧未读/注意力语义**；凡是「有没有新东西」的判断，面板必须自持游标，不能借宿主的 unread 位。
+
+已在 `TASK-P1.md` §6 立 P1b 修正规格（`097d160`）并派单。
