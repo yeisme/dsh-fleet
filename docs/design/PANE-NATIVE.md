@@ -406,3 +406,42 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 
 - 同一会话「已在别处打开」的守卫（代码里有：命中 `mounted` 或已有同 contentId 的 tab 时显示「此会话已在其他位置打开」），未做双开实测。
 - 拖图片进面板 composer 上传（原生能力，理论上免费，未实测）。
+
+---
+
+## 13. 实证记录（P0-②③ 已落地，2026-11-19 13:08）
+
+提交 `1eec8c7 feat: 快捷键新建会话面板与只读线程动作`（`client.js` +181 / −152，仅一个文件）。
+
+**浏览器实测**（未重启宿主，HMR 自动生效）：
+
+| 验收项 | 结果 |
+|---|---|
+| `⌥⌘J` 一步开面板 | ✅ 直接多出一个「会话」tab |
+| 打开后**无需点击**即可打字 | ✅ 用真键盘输入「焦点测试」，文字直接落进 composer（原生自动聚焦，不需要补 hack） |
+| 只读线程面板**没有任何输入框** | ✅ DOM 里只有徽标「⧉ 只读 · 侧线」+「线程列表」+ 动作条 |
+| 动作条三键 | ✅「接着问 → 开新会话」「复制上下文」「分叉继续」 |
+| 「接着问」= 新会话 + **草稿**注入 | ✅ 新 tab 的 composer 里出现 `<外部会话上下文>` 前缀（含 `[user]/[assistant]` 逐条），**未自动发送** |
+| 既有线程只读渲染 / `thread` 地址 / 分叉 | ✅ 未回退 |
+
+证据截图：[`shots/verify-p023.png`](shots/verify-p023.png)
+
+### 13.1 两处新 API（文档原先没写，实现必须知道）
+
+| 场景 | 真实做法 | 依据 |
+|---|---|---|
+| **跨会话写草稿**（「接着问」把上下文塞进**新**会话的 composer） | `inputActions.setDraft(text)` 是**组件注入属性**，只对当前 slot 绑定的会话有效。跨会话要用 `sessions.using(id, { source, signal }, cb)` 持有新会话，再 `conversation.input.for(reference.binding.ctx).setDraft(text)` | `dsh-api-session-controller` 的 `ISessions.using` + `dsh-client-ui-conversation` 的 `IConversation.input.for(actx)` |
+| **快捷键冲突回退** | `shortcuts.register` 的 `defaults` 是"尽力而为"：注册时若发现同 key 已被占用，回退到 `⌥⌘U` 并把实际生效键位回报 | `dsh-client-shortcuts/src/client/types.ts:8` |
+
+另：`⌥⌘J` 选键依据（实测占用表）——`⌘N`/`⌥⌘N`=`session.new`，`⌘P`/`⌥⌘P`=工作区文件，`⌘K`/`⌥⌘K`=搜索会话，`⌘T`/`⌥⌘T`=新浏览器 tab，`⌘W`=关页，`⌘⇧B`=右栏开关，`⌘\`=分屏，`⌘⌥↵`=全屏。
+
+### 13.2 状态盘点
+
+| 阶段 | 状态 |
+|---|---|
+| P0-① `panechat` 面板 + 原生会话 | ✅ 已落地并实测 |
+| P0-② `⌥⌘J` 一步开面板 + 自动聚焦 | ✅ 已落地并实测 |
+| P0-③ 只读面板动作条 + 接着问 | ✅ 已落地并实测 |
+| 宿主侧六坑 + 删 `force` 后门 | ⏳ 规格已写（`TASK-HOST-1.md`），**只改代码不重启**；重启需独立窗口 |
+| P1（状态点四态、`⌘⌥A`、标题统一） | ⏳ 未开始 |
+| P2（起手胶囊、上下文压缩、claude/codex 适配） | ⏳ 未开始 |
