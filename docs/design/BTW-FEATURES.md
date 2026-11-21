@@ -207,6 +207,10 @@ F12 与 v2.2/v2.3 都改 `client.js`，但 F12 是**体验级阻塞**（主人�
 
 **必修前置（2026-11-19 验收遗留，至今未修）**，建议并入 v2.1b：
 
-1. **登记表不落盘**：实测 `dsh-threads:forks:v1` 恒为 0 条。`rememberFork()` 调了 `saveForks()`，但读到 0 条说明写入被吞或键名不一致 —— F12 的 `cutoff` 与 `expanded` 都存这个登记表，**这条不修 F12 也不会持久**。
+1. **登记表写到 `localStorage["undefined"]`**（2026-11-21 10:2x 实测钉死，不是假阴性）：
+   - 现象：`dsh-threads:forks:v1` 为 null，但 `Object.keys(localStorage)` 里有键 `"undefined"`，其值是 2 条合法记录（`{id, at, cutoff:30, expanded:false}`）。
+   - 根因：`FORK_STORE_KEY` 用 `var` 声明（v2 为躲 TDZ 而改），提升后为 `undefined` 直到执行到赋值行；`apply()` 若在 factory 体跑到那行之前被 Cordis 调用，`setItem(FORK_STORE_KEY, …)` 就成了 `setItem(undefined, …)`。与第二次踩的 `Cannot access 'forkRegistry' before initialization` 同源。
+   - 修法：键名改成 `function forkStoreKey() { return 'dsh-threads:forks:v1' }`，读写都走函数调用（与初始化顺序无关），删掉 `var FORK_STORE_KEY`；启动时若 `localStorage['undefined']` 是合法数组，并入正式键后 `removeItem('undefined')`（已有真数据，别丢）。
+   - 影响面：F12 的 `cutoff`/`expanded` 全存在这张表 → 不修则刷新即回默认，折叠永远不持久。
 2. **`panechat.branch`（⌥⌘⇧J）无反应**：`tryRegister` 静默跳过，需在回报里列出实际生效键位，或退化为仅命令面板可用并明说。
 3. **分栏 target 仍取不到**：三级回退加了 `active()` 仍落「右栏未打开」，需要改成对 `mounted` 的第一个 docked pane 直接 `split`。
