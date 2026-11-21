@@ -117,3 +117,80 @@
 2. v2.1：主区聚焦按 `⌥⌘J` → 提示文案应是「右栏已占满两个窗口 / 右栏未打开」，不再出现「没能定位当前栏位」；分叉面板顶部出现 `data-dsh-fork-planwarn`；连按两次 `⌥⌘J` 不再新增会话。
 3. v2.2：分叉里「送到主对话」→ 主线 chip → 插入草稿（不自动发）；左栏分叉行有 `⑃`；短 TTL 下闲置分叉被归档且可撤销。
 4. v2.3：`⌘/` 速查表里出现新 id，键位与设计表一致；冲突项以实测兜底键为准并回填到 §4。
+
+
+---
+
+## 5. F12 折叠语义重设计：折叠只藏「带进来的历史」，永不自动展开（2026-11-21）
+
+### 5.1 现象与根因
+
+主人反馈：**「目前折叠后，输入信息后又会突然展开」**。
+
+根因在 `client.js:1476-1484`（v2 写的自动展开）：
+
+```js
+const speaking = paneSession?.running === true || (paneSession?.pendingSubmissions?.length ?? 0) > 0
+useEffect(() => {
+  if (paneId === undefined || !folded || !speaking) return
+  setFolded(false)              // ← 一发言就展开
+  setForkExpanded(paneId, true) // ← 还把这当成用户意愿写进登记表
+}, [paneId, folded, speaking])
+```
+
+两个设计错误：
+1. 把「我要在这问一句」当成「我要看 5 轮历史」——用户收起历史是为了**少看上下文**，不是为了少输入。
+2. 展开后写 `expanded: true` 持久化，于是**收起点被永久覆盖**，下次打开还是全展开。
+
+### 5.2 新语义
+
+> 折叠 = 只隐藏「分叉时带进来的那部分历史」。本面板里新说的话、新回答，任何情况下都可见。
+
+- 用户在这个面板里发消息 → 不改变折叠状态，新一轮直接出现在卡片下方。
+- 折叠状态只由两个动作改变：点卡片「展开历史」、按 `⌥⌘H`。
+- 折叠态卡片文案改成「历史已收起（只显示本轮）」，让语义自解释。
+
+### 5.3 判定数据（实测，2026-11-21 宿主 80843）
+
+主区会话 DOM 实测：
+
+| 事实 | 值 |
+|---|---|
+| 消息流容器 | `[data-conversation-scroll] > [data-slot] > …`（嵌套 slot，**层级不固定**，按 index 藏不可靠） |
+| 每行带 turn 号 | `data-chat-turn="30"`、`data-chat-flow-key="9:turn-tail30"`、`data-chat-flow-kind="turn-tail"` |
+| turn 号性质 | **单调递增整数**，实测当前挂载 26–30（窗口化只渲染最近 5 轮） |
+| 行条数 | 单会话 146 个 `[data-chat-turn]` 节点（一 turn 多行：user/tool/assistant） |
+
+所以判据用**阈值**而不是序号：`turn <= cutoff` 的行属于「带进来的历史」，隐藏；`turn > cutoff` 的行是本面板产生的，永远显示。窗口化后加载的旧 turn 也自然落在阈值下被隐藏。
+
+### 5.4 实现要点
+
+1. **收起点采样**：点「收起历史」那一刻取 `cutoff = max(data-chat-turn)`（没有 turn 行就取 0），写进 fork 登记表 `cutoff` 字段。
+2. **标记隐藏**：对该 pane 内所有 `[data-chat-turn]` 节点，`Number(el.dataset.chatTurn) <= cutoff` 的加 `data-dsh-fork-hid=""`；CSS 一条规则收口：
+   ```css
+   [data-dsh-fork-hid]{display:none !important}
+   ```
+   不用内联 `style.display`：React 重渲染会覆盖内联样式，加属性则会被我们下轮扫描补回。
+3. **MutationObserver**：监听 pane 根节点的 subtree childList，新增行立刻按阈值判定（流式输出/翻历史都会新增）。观察器在 pane 卸载时 disconnect。
+4. **展开**：删除该 pane 全部 `data-dsh-fork-hid`，登记表 `expanded=true`。
+5. **删除自动展开**：删掉 `client.js:1476-1484` 整段 effect 与 `setForkExpanded(paneId, true)` 调用。
+6. **挂载复原**：登记表 `expanded=false` 时按 `cutoff` 重放隐藏（cutoff 缺失则取挂载时的 max turn，等价「先全藏」）。
+7. **非分叉面板**：`forkOf(paneId) === undefined` 时完全不介入（不注册观察器、不加属性）。
+
+### 5.5 边界
+
+- 分叉里**已经**聊过几轮后再收起：cutoff 取当时的 max turn，已聊的内容也归入「历史」被藏；这是自洽的（用户点的是「收起」）。
+- 老登记表没有 `cutoff` 字段：按挂载时 max turn 兜底，不报错。
+- 懒加载更早历史（向上滚动）：新加载的 turn 号更小 → 被隐藏；用户此时点展开即可看全。
+
+### 5.6 验收
+
+| # | 断言 |
+|---|---|
+| F12-1 | 折叠态在 composer 发一条消息后，`[data-dsh-fork="folded"]` 仍存在、卡片文案仍是「历史已收起」 |
+| F12-2 | 新一轮的行可见（该 turn 号 > cutoff），旧轮的行 `display:none` |
+| F12-3 | 刷新页面后仍折叠（登记表 `expanded=false` 且 `cutoff` 有值） |
+| F12-4 | 点「展开历史」后全部可见，且刷新后仍展开 |
+| F12-5 | `⌥⌘H` 与卡片按钮行为一致 |
+| F12-6 | 非分叉的普通 panechat 面板不出现 `data-dsh-fork-hid` |
+| F12-7 | 代码里不再有 `speaking` 触发的自动 `setForkExpanded` |
