@@ -232,3 +232,52 @@ F12 与 v2.2/v2.3 都改 `client.js`，但 F12 是**体验级阻塞**（主人�
 | 控制台 | ✅ `command.label` 报错 0 次 |
 
 **补充说明**：刷新后隐藏行数从 146 降到 109 不是漏标 —— 窗口化只挂载了最近 4 个历史轮（27–30），阈值判定对「已挂载的」全命中；向上滚动加载更早的轮同样落在 `cutoff` 之下。
+
+
+---
+
+## 6. v2.1b：`⌥⇧⌘J` 静默 + 分栏永远「右栏未打开」（2026-11-21 12:1x 实测）
+
+### 6.1 现象
+
+| 动作 | 结果 |
+|---|---|
+| `⌥⌘J`（分叉面板） | 分叉建出来了，但提示「右栏未打开，分叉已开在同一栏的新标签里」——而右栏**明明开着**（`[role=tablist]` = 2，5 个默认 tab 在位） |
+| `⌥⇧⌘J`（强制分叉面板） | **完全静默**：不建分叉、不建 tab、无提示、无报错 |
+| `⌘/` 速查表 | 两条都已注册（「强制分叉面板 ⌥⇧⌘J」「收起/展开分叉历史 ⌥⇧⌘H」） |
+
+### 6.2 根因
+
+两条都卡在同一个判据：`sidebarRight.mounted.getSnapshot()`。
+
+```js
+async function openContinuationFrom(owner, sourceId, noticeSession = owner, anchor, { force = false } = {}) {
+  if (scope.sidebarRight.mounted.getSnapshot() !== owner || pending.has(owner)) return   // ← 静默 return
+  ...
+}
+```
+
+- `mounted` 只在「右栏由某会话主动打开」时有值。刷新后右栏从 localStorage **恢复布局**（tab 还在、`openTabs` 有内容），但 `mounted` 是空的。
+- 于是在这种状态下：`⌥⌘J` 走的是「没匹配到 owner」的分支却仍然建了分叉（说明它走了另一条路径），最终 `splitBlock` 判 `stale` → 落到「右栏未打开」文案；`⌥⇧⌘J` 则被第一行直接 return，连提示都没有。
+- `focusedTarget()/commandTarget()/active()` 三级回退也都没取到目标（与 `mounted` 同源，都依赖右栏的「当前挂载会话」而不是「当前有 tab」）。
+
+**结论：判据把「右栏有布局」误判成「右栏没打开」。** 真机证据：`strips=2`、5 个 tab 在、`panes=1`（分叉确实开了），但文案说没打开。
+
+### 6.3 修法
+
+1. **判据改成看布局，不看 mounted**：
+   - 「右栏是否可用」= `sidebarRight.isExpanded() === true` 且 `openTabs.getSnapshot().length > 0`（或 `[role=tablist]` 存在）。
+   - owner 的取法：`mounted.getSnapshot() ?? sessions.currentOrLastFocused() ?? sid`（用当前主区会话兜底），不要再因 mounted 为空而 return。
+2. **目标 pane 的取法**加一层：「若 `focusedTarget/commandTarget/active` 全空，就取右栏第一个 docked pane」（从 `openTabs` 里第一个 `kind==='panechat'` 或默认 pane 推断），拿不到才报 blocked。
+3. **静默不允许**：任何提前 return 的分支都要 `notify('info', …)` 说明原因（「右栏未打开」「正在分叉，请稍候」「目标会话已切换」），不再无声无息。
+4. **`⌥⇧⌘J` 与 `⌥⌘J` 共用同一条 open 路径**，只在 `force` 上有差别；force 时不查 `openExistingFork`。
+
+### 6.4 验收
+
+| # | 断言 |
+|---|---|
+| P1 | 刷新页面（右栏布局被恢复、mounted 为空）后按 `⌥⌘J`：分叉建出、**不出现**「右栏未打开」文案 |
+| P2 | 同一状态按 `⌥⇧⌘J`：必然新建一条分叉（不受已有分叉影响），且不静默 |
+| P3 | 右栏真的关掉时（`⌥⇧⌘B` 收起）按 `⌥⌘J`：给出「右栏未打开」的**提示**，不是静默 |
+| P4 | 分栏成功时 `[role=tablist]` 从 1 变 2（新 pane 在旁边） |
+| P5 | 连续按 `⌥⌘J` 两次：第二次聚焦已有分叉，不新建（F12 之前的 B3 语义保持） |
