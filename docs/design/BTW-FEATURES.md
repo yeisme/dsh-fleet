@@ -300,3 +300,43 @@ async function openContinuationFrom(owner, sourceId, noticeSession = owner, anch
 | P2 | 折叠时新回答提示 | 折叠态有新回答时无提示 | 卡片 meta 加「本轮已更新」，或折叠态自动滚到本轮末尾 | v3 |
 
 **不做**（明确排除，避免堆功能）：多级折叠、分叉内嵌分叉树、分叉自动跑测试/改代码——btw 的定位是「问得快、回得来」，重活走 Agent Teams。
+
+
+---
+
+## 8. 「侧边栏对话不会直接创建 pane」——根因与改法（2026-11-21 13:0x 实测）
+
+### 8.1 主人在真实界面看到的行为
+
+`⌥⌘J` 之后：右栏**没有新 pane**，分叉落成同 pane 的第 3 个 tab（对话 / 轨迹 / 云枢…），提示「右栏未打开，已展开右栏并把分叉开在新标签里」。
+
+实测：起始 `[role=tablist]`=2（右栏 1 个 pane + 主区 1 个）、按完 `strips` 仍是 2、`panes=1`、`notice` 如上。
+
+### 8.2 根因链
+
+1. `openForkPaneBeside()` 里 `const live = target !== undefined && isTargetCurrent(target) ? target : undefined`；
+2. `target` 来自 `forkTarget()` 的四级回退：`focusedTarget(anchor)` → `commandTarget(anchor)` → `active()?.id` → `openTabs` 里第一个 `kind==='panechat'` 的 tab；
+3. **这四级全都以「panechat tab / 焦点」为单位**。而右栏此刻的 tab 是默认的 对话 / 轨迹 / 上下文 / 编队 / 统计 —— 一个 panechat tab 都没有，焦点也不在右栏，于是四级全落空；
+4. `live === undefined` → `block = 'stale'` → **`split()` 一次都没被调用**（`const split = live === undefined ? undefined : sidebarRight.split(live.paneId)`），自然不可能出现新 pane；
+5. v2.1b 只是把静默换成了提示文案，没动这条链。
+
+**一句话：代码在等一个「panechat 位置」才肯分栏，但分栏本来就不需要那个位置——`split(paneId?)` 的 paneId 是可省的。**
+
+### 8.3 改法（按顺序短路）
+
+1. **先问宿主**：`const split = sidebarRight.split(live?.paneId)` —— 有 target 就按 target 分，**没有 target 就无参调用**，让宿主挑当前 pane。`split()` 返回新 `PaneId` 就成功。
+2. `split()` 返回 undefined 时，再用 `splitBlock(live ?? activePaneHint())` 取**真实**原因（budget / width / collapsed / float / empty）来出提示，不要一律说「stale / 右栏未打开」。
+3. **budget 满时的降级要体面**：不要塞进已有 pane 的第 6 个 tab（用户找不到）。做法二选一，优先 A：
+   - A. 关掉一个**非分叉、非正在使用**的默认 tab（优先 `轨迹` / `上下文` / `编队` / `统计` 中未激活的那个）腾出 pane，再 split；
+   - B. 实在腾不出来，就**替换当前 pane 的活动 tab**（`openResource(address, { replaceTab: true })`），让分叉直接占据视线，而不是藏在 tab 列表尾部。
+4. `⌥⇧⌘J` 走同一条链，只多一个 `force`（不查已有分叉）。
+
+### 8.4 验收（真机，必须给数值）
+
+| # | 断言 |
+|---|---|
+| S1 | 右栏只有默认 tab（无 panechat）时按 `⌥⌘J`：`[role=tablist]` 由 2 变 3（右栏出现第二个 pane），`notice` 为空 |
+| S2 | 上一条若因 budget 降级：`notice` 必须说「右栏已满，已占用当前 pane」而不是「右栏未打开」，且分叉**可见**（当前 tab 就是它） |
+| S3 | 右栏真的收起时（`⌥⇧⌘B`）：`notice` 说「右栏未打开」，且展开右栏后分叉可见 |
+| S4 | 连续 `⌥⌘J`：第一次建 pane，第二次聚焦该 pane 分叉，不新建会话 |
+| S5 | `⌥⇧⌘J` 在同状态下必建新分叉且必有可见落位 |
