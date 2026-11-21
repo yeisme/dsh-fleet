@@ -941,11 +941,47 @@ window.__ModuleLoader__.load({
     // can invoke `apply` while this body is still on the stack: everything the
     // apply path may touch stays a hoisted `var` or a function declaration, never
     // a `const`/`let` (two TDZ crashes proved this the hard way).
-    /** localStorage key holding the panels this plugin forked. */
-    var FORK_STORE_KEY = 'dsh-threads:forks:v1'
+    /**
+     * localStorage key holding the panels this plugin forked. A function, not a
+     * `var`: Cordis may call `apply` before the factory body reaches a `var`
+     * initializer, and a hoisted-but-unassigned key made every save land under
+     * the literal key "undefined" while the real key stayed empty.
+     */
+    function forkStoreKey() {
+      return 'dsh-threads:forks:v1'
+    }
 
-    /** Oldest records beyond this count are dropped. */
-    var FORK_STORE_LIMIT = 200
+    /** Oldest records beyond this count are dropped (a function for the same reason). */
+    function forkStoreLimit() {
+      return 200
+    }
+
+    /**
+     * Fold records stranded under the literal key "undefined" (written while the
+     * store key was an unassigned `var`) into the real key. The stray key is
+     * removed only when everything in it is a fork record; anything else there
+     * belongs to someone else and stays.
+     */
+    function adoptStrayForks() {
+      try {
+        const raw = localStorage.getItem('undefined')
+        if (raw === null) return
+        const stray = JSON.parse(raw)
+        if (!Array.isArray(stray)) return
+        const ours = stray.filter((row) => typeof row?.id === 'string' && typeof row.parentId === 'string' && Number.isFinite(row.at))
+        if (ours.length === 0) return
+        const merged = new Map()
+        const current = JSON.parse(localStorage.getItem(forkStoreKey()) ?? '[]')
+        for (const row of Array.isArray(current) ? current : []) if (typeof row?.id === 'string') merged.set(row.id, row)
+        for (const row of ours) {
+          const kept = merged.get(row.id)
+          if (kept === undefined || (row.touched ?? row.at) > (kept.touched ?? kept.at)) merged.set(row.id, row)
+        }
+        const rows = [...merged.values()].sort((left, right) => right.at - left.at).slice(0, forkStoreLimit())
+        localStorage.setItem(forkStoreKey(), JSON.stringify(rows))
+        if (ours.length === stray.length) localStorage.removeItem('undefined')
+      } catch { /* unreadable stray data stays where it is */ }
+    }
 
     /**
      * Panels this plugin forked: child Session id -> where it came from.
@@ -957,8 +993,38 @@ window.__ModuleLoader__.load({
 
     /** @returns the fork registry, loaded from storage on first use. */
     function forks() {
-      if (forkRegistry === undefined) forkRegistry = loadForks()
+      if (forkRegistry === undefined) {
+        adoptStrayForks()
+        forkRegistry = loadForks()
+      }
       return forkRegistry
+    }
+
+    /** Registry subscribers, and a revision that moves on every change. */
+    var forkListeners
+    var forkRevision
+
+    /**
+     * @param listener - called after any fork record changes, in this tab or another.
+     * @returns unsubscribe.
+     */
+    function subscribeForks(listener) {
+      if (forkListeners === undefined) forkListeners = new Set()
+      forkListeners.add(listener)
+      return () => { forkListeners.delete(listener) }
+    }
+
+    /** @returns a value that changes whenever the registry does. */
+    function forkSnapshot() {
+      return forkRevision ?? 0
+    }
+
+    function notifyForks() {
+      forkRevision = (forkRevision ?? 0) + 1
+      if (forkListeners === undefined) return
+      for (const listener of [...forkListeners]) {
+        try { listener() } catch { /* one broken subscriber must not starve the rest */ }
+      }
     }
 
     /**
@@ -968,42 +1034,65 @@ window.__ModuleLoader__.load({
     function loadForks() {
       const records = new Map()
       try {
-        const raw = localStorage.getItem(FORK_STORE_KEY)
+        const raw = localStorage.getItem(forkStoreKey())
         if (raw === null) return records
         const parsed = JSON.parse(raw)
         if (!Array.isArray(parsed)) return records
         for (const row of parsed) {
           if (typeof row?.id !== 'string') continue
-          records.set(row.id, {
+          const record = {
             parentId: typeof row.parentId === 'string' ? row.parentId : '',
             title: typeof row.title === 'string' ? row.title : '',
             turns: Number.isFinite(row.turns) ? row.turns : 0,
             at: Number.isFinite(row.at) ? row.at : 0,
             expanded: row.expanded === true,
             planMode: row.planMode === true,
-          })
+          }
+          // Fold point: turns numbered at or below it are the history a folded panel hides.
+          if (Number.isSafeInteger(row.cutoff) && row.cutoff >= 0) record.cutoff = row.cutoff
+          // Last write, so two tabs saving the same record keep the newer one.
+          if (Number.isFinite(row.touched)) record.touched = row.touched
+          records.set(row.id, record)
         }
       } catch { /* storage unavailable or unparsable: keep the in-memory registry */ }
       return records
     }
 
-    /** Persist the registry, dropping the oldest records past the limit. */
+    /**
+     * Persist the registry, dropping the oldest records past the limit. Another
+     * tab may have written since this one loaded, so merge by id and keep the
+     * record touched last: writing the in-memory map blindly erased every record
+     * another tab had added.
+     */
     function saveForks() {
       try {
-        const rows = [...forks()].map(([id, record]) => ({ id, ...record }))
+        const merged = loadForks()
+        for (const [id, record] of forks()) {
+          const stored = merged.get(id)
+          if (stored === undefined || (record.touched ?? record.at) >= (stored.touched ?? stored.at)) merged.set(id, record)
+        }
+        for (const [id, record] of merged) if (!forks().has(id)) forks().set(id, record)
+        const rows = [...merged].map(([id, record]) => ({ id, ...record }))
         rows.sort((left, right) => right.at - left.at)
-        localStorage.setItem(FORK_STORE_KEY, JSON.stringify(rows.slice(0, FORK_STORE_LIMIT)))
+        localStorage.setItem(forkStoreKey(), JSON.stringify(rows.slice(0, forkStoreLimit())))
       } catch { /* a full or absent storage must never break forking */ }
+    }
+
+    /** Adopt what another tab wrote. */
+    function reloadForks() {
+      forkRegistry = loadForks()
+      notifyForks()
     }
 
     /**
      * Record one fork so its panel can show the continuation card.
      * @param childId - the forked Session.
-     * @param record - where it came from: parent Session, title, inherited turns.
+     * @param record - where it came from: parent Session, title, inherited turns, fold point.
      */
     function rememberFork(childId, record) {
-      forks().set(childId, { expanded: false, ...record })
+      forks().set(childId, { expanded: false, ...record, touched: Date.now() })
       saveForks()
+      notifyForks()
     }
 
     /**
@@ -1015,15 +1104,59 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Remember whether one fork panel shows its inherited history.
+     * Fold or show one fork panel's history. Only the card button and the fold
+     * shortcut call this; talking in the panel never does.
      * @param sessionId - the forked Session.
-     * @param expanded - true once the inherited transcript is revealed.
+     * @param folded - true to hide the history.
+     * @param cutoff - when folding: the newest turn that counts as history.
      */
-    function setForkExpanded(sessionId, expanded) {
+    function setForkFolded(sessionId, folded, cutoff) {
       const record = forks().get(sessionId)
-      if (record === undefined || record.expanded === expanded) return
-      forks().set(sessionId, { ...record, expanded })
+      if (record === undefined) return
+      const next = { ...record, expanded: !folded, touched: Date.now() }
+      if (folded && Number.isSafeInteger(cutoff) && cutoff >= 0) next.cutoff = cutoff
+      forks().set(sessionId, next)
       saveForks()
+      notifyForks()
+    }
+
+    /**
+     * Pin the fold point of a record written before fold points existed.
+     * @param sessionId - the forked Session.
+     * @param cutoff - the newest turn the panel showed when it mounted.
+     */
+    function setForkCutoff(sessionId, cutoff) {
+      const record = forks().get(sessionId)
+      if (record === undefined || !Number.isSafeInteger(cutoff) || record.cutoff === cutoff) return
+      forks().set(sessionId, { ...record, cutoff, touched: Date.now() })
+      saveForks()
+      notifyForks()
+    }
+
+    /**
+     * Fold point of a fresh fork: the last turn the source completed. A native
+     * fork copies the completed turns with their turn numbers, so in the child
+     * exactly these are the carried-over history and every later turn is new.
+     * @param sessions - client session controller.
+     * @param sessionId - the source Session.
+     * @returns that turn number, or undefined when the source has none loaded.
+     */
+    function lastCompletedTurn(sessions, sessionId) {
+      let entries
+      try { entries = sessions.binding(sessionId)?.eventSource.getSnapshot()?.entries } catch { return undefined }
+      if (!Array.isArray(entries)) return undefined
+      let open
+      let done
+      for (const entry of entries) {
+        const event = entry?.event
+        if (event?.type === 'turn/start') {
+          const turn = Number(event.data?.turn)
+          open = Number.isSafeInteger(turn) ? turn : undefined
+        } else if (event?.type === 'turn/end' && open !== undefined) {
+          done = done === undefined ? open : Math.max(done, open)
+        }
+      }
+      return done
     }
 
     /**
@@ -1161,6 +1294,7 @@ window.__ModuleLoader__.load({
       const source = deps.sessions.list.getSnapshot().byId[sourceId]
       const cwd = source?.cwd
       const turns = countTurns(deps.sessions, sourceId)
+      const cutoff = lastCompletedTurn(deps.sessions, sourceId)
       let id
       let forked = true
       try {
@@ -1179,6 +1313,7 @@ window.__ModuleLoader__.load({
           turns,
           planMode,
           at: Date.now(),
+          ...(cutoff === undefined ? {} : { cutoff }),
         })
       }
       return { id, forked }
@@ -1245,10 +1380,10 @@ window.__ModuleLoader__.load({
 [data-dsh-pane-start-lead]{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);}
 [data-dsh-pane-error]{color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere;margin:0;}
 [data-dsh-pane-chat]>[role]{padding:12px;}
-/* Folded fork panel: hide only the transcript block, never the composer seat.
-   The transcript slot itself is display:contents, so its own children carry the box. */
-[data-dsh-fork="folded"] [data-conversation-scroll] > :first-child,
-[data-dsh-fork="folded"] [data-conversation-scroll] > :first-child > *{display:none;}
+/* Folded fork panel: only rows of carried-over turns hide. The fold engine marks
+   them with an attribute (an inline style would be overwritten by React); turns
+   said in this panel never carry the mark, and the composer is never a turn row. */
+[data-dsh-fork-hid]{display:none !important;}
 [data-dsh-fork-planwarn]{display:flex;flex:none;align-items:flex-start;gap:8px;padding:9px 12px;
   border-bottom:1px solid var(--dsw-alias-border-l1);background:rgba(255,196,0,.12);color:var(--dsw-alias-label-primary);
   font-size:12px;line-height:1.4;}
@@ -1408,6 +1543,180 @@ window.__ModuleLoader__.load({
         const getTabs = () => openTabs.getSnapshot()
 
         /**
+         * Newest turn number one fork panel knows: its own event stream, plus the
+         * rows mounted in the given panel roots.
+         * @param paneId - the forked Session.
+         * @param roots - panel roots to scan (may be empty).
+         * @returns that turn, or undefined while nothing is loaded yet.
+         */
+        function newestTurn(paneId, roots) {
+          let newest
+          const consider = (value) => {
+            const turn = Number(value)
+            if (Number.isSafeInteger(turn) && (newest === undefined || turn > newest)) newest = turn
+          }
+          try {
+            const entries = scope.sessions.binding(paneId)?.eventSource.getSnapshot()?.entries
+            if (Array.isArray(entries)) {
+              for (const entry of entries) if (entry?.event?.type === 'turn/start') consider(entry.event.data?.turn)
+            }
+          } catch { /* rendered rows below still count */ }
+          for (const root of roots) {
+            for (const row of root.querySelectorAll('[data-chat-turn]')) consider(row.getAttribute('data-chat-turn'))
+          }
+          return newest
+        }
+
+        /** @returns the mounted roots of one fork panel (a Session can show in more than one tab). */
+        function forkRoots(paneId) {
+          return [...document.querySelectorAll('[data-dsh-fork-pane]')]
+            .filter((root) => root.getAttribute('data-dsh-fork-pane') === paneId)
+        }
+
+        /**
+         * Hide the carried-over turns of one folded fork panel, and keep hiding
+         * them as rows mount: streaming adds rows, and the windowed transcript
+         * mounts older turns when scrolled up. Rows are judged by their turn
+         * number against the fold point, never by position — the transcript's
+         * nested slots have no fixed depth.
+         * @param root - the panel root.
+         * @param paneId - the forked Session.
+         * @returns teardown: stop observing and reveal every row.
+         */
+        function foldTranscript(root, paneId) {
+          let cutoff = forkOf(paneId)?.cutoff
+          // A record written before fold points existed hides everything until the
+          // panel's own turns load, then pins the fold point at the newest one.
+          const settle = () => {
+            if (Number.isSafeInteger(cutoff)) return true
+            const newest = newestTurn(paneId, [root])
+            if (newest === undefined) return false
+            cutoff = newest
+            setForkCutoff(paneId, newest)
+            return true
+          }
+          const judge = (row) => {
+            const turn = Number(row.getAttribute('data-chat-turn'))
+            if (!Number.isSafeInteger(turn)) return
+            if (!Number.isSafeInteger(cutoff) || turn <= cutoff) {
+              if (!row.hasAttribute('data-dsh-fork-hid')) row.setAttribute('data-dsh-fork-hid', '')
+            } else if (row.hasAttribute('data-dsh-fork-hid')) row.removeAttribute('data-dsh-fork-hid')
+          }
+          const sweep = () => { for (const row of root.querySelectorAll('[data-chat-turn]')) judge(row) }
+          settle()
+          sweep()
+          const observer = new MutationObserver((records) => {
+            if (!Number.isSafeInteger(cutoff) && settle()) { sweep(); return }
+            for (const record of records) {
+              if (record.type === 'attributes') { judge(record.target); continue }
+              for (const node of record.addedNodes) {
+                if (node.nodeType !== 1) continue
+                if (node.hasAttribute('data-chat-turn')) judge(node)
+                for (const row of node.querySelectorAll('[data-chat-turn]')) judge(row)
+              }
+            }
+          })
+          observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-chat-turn'] })
+          return () => {
+            observer.disconnect()
+            for (const row of root.querySelectorAll('[data-dsh-fork-hid]')) row.removeAttribute('data-dsh-fork-hid')
+          }
+        }
+
+        /**
+         * The card button and the fold shortcut share this. Folding pins the fold
+         * point at the newest turn the panel has, so everything said so far — the
+         * carried-over history and any turns already asked here — folds away, and
+         * only what is said next stays visible.
+         * @param paneId - the forked Session.
+         */
+        function toggleForkFold(paneId) {
+          const record = forkOf(paneId)
+          if (record === undefined) return
+          if (record.expanded === true) setForkFolded(paneId, true, newestTurn(paneId, forkRoots(paneId)) ?? 0)
+          else setForkFolded(paneId, false)
+        }
+
+        /**
+         * The fork panel a fold command means: the one holding keyboard focus (the
+         * person is usually typing in it), else the focused or active sidebar tab,
+         * else the only fork panel on screen. Tabs are not filtered by owner: a
+         * restored layout can show a fork whose tab was opened beside another chat.
+         * @returns that panel's Session id, or undefined when none is unambiguous.
+         */
+        function targetForkPane() {
+          const here = document.activeElement?.closest?.('[data-dsh-fork-pane]')?.getAttribute('data-dsh-fork-pane')
+          if (here && forkOf(here) !== undefined) return here
+          let tabs = []
+          try { tabs = scope.sidebarRight.openTabs.getSnapshot() ?? [] } catch { /* fall through to the mounted panels */ }
+          const candidates = Array.isArray(tabs)
+            ? tabs.filter((entry) => entry.kind === 'panechat' && forkOf(parsePaneAddress(entry.contentId)) !== undefined)
+            : []
+          let focusedId
+          let activeId
+          try { focusedId = scope.sidebarRight.focusedTarget()?.tabId } catch { /* no focus information */ }
+          try { activeId = scope.sidebarRight.active()?.id } catch { /* no active tab */ }
+          const chosen = candidates.find((entry) => entry.tabId === focusedId) ?? candidates.find((entry) => entry.tabId === activeId)
+          if (chosen !== undefined) return parsePaneAddress(chosen.contentId)
+          const mounted = new Set([...document.querySelectorAll('[data-dsh-fork-pane]')].map((root) => root.getAttribute('data-dsh-fork-pane')))
+          return mounted.size === 1 ? [...mounted][0] : undefined
+        }
+
+        scope.effect(() => {
+          // Materialize the registry at startup so stranded records are adopted now,
+          // not at the first fork.
+          forks()
+          const onStorage = (event) => { if (event.key === forkStoreKey()) reloadForks() }
+          window.addEventListener('storage', onStorage)
+          return () => window.removeEventListener('storage', onStorage)
+        }, 'threads: follow fork registry across tabs')
+
+        // The fold command and shortcut are registered here, beside the helpers
+        // they call; both do exactly what the card button does. A refusal from
+        // either registry must not take anything else down with it.
+        scope.inject(['commandUi'], (commands) => {
+          commands.effect(() => {
+            try {
+              return commands.commandUi.register({
+                name: 'panechat.fold',
+                label: () => t('收起/展开分叉历史', 'Fold or show fork history'),
+                description: () => t('只藏分叉带进来的历史，本面板新说的话始终可见', 'Hides only the history carried into the fork; new turns stay visible'),
+                available: () => targetForkPane() !== undefined,
+                ui: { kind: 'action', run: () => { const paneId = targetForkPane(); if (paneId !== undefined) toggleForkFold(paneId) } },
+              })
+            } catch { return () => {} }
+          }, 'threads: fork fold command')
+        })
+
+        scope.inject(['shortcuts'], (keyboard) => {
+          keyboard.effect(() => {
+            // Live in the editable region too: the person is usually typing in the
+            // fork when they want it out of the way. Per-profile defaults, because
+            // the host validates every profile at registration and one reserved
+            // profile refuses the whole entry: ⌥⌘H on the desktop shell; a browser
+            // tab only lets ⌘H chords through with three modifiers, so it gets
+            // ⌥⌘⇧H; Linux reserves every Ctrl+H chord and keeps the command only.
+            const desktopFold = { code: 'KeyH', modifiers: ['primary', 'alt'] }
+            const webFold = { code: 'KeyH', modifiers: ['primary', 'alt', 'shift'] }
+            try {
+              return keyboard.shortcuts.register({
+                id: 'panechat.fold',
+                label: () => t('收起/展开分叉历史', 'Fold or show fork history'),
+                aliases: ['fold fork history', 'show fork history'],
+                defaults: { 'desktop:macos': desktopFold, 'desktop:windows': desktopFold, 'web:macos': webFold, 'web:windows': webFold },
+                regions: ['page', 'editable', 'terminal'],
+                modals: [],
+                resolve: () => {
+                  const paneId = targetForkPane()
+                  if (paneId === undefined) return { status: 'blocked', reason: t('右栏没有分叉面板', 'No fork panel in the sidebar') }
+                  return { status: 'handled', run: () => toggleForkFold(paneId) }
+                },
+              })
+            } catch { return () => {} }
+          }, 'threads: fork fold shortcut')
+        })
+
+        /**
          * Header of a forked panel: what it continues, how much context it
          * carries, and the two things a person wants next (show or hide the
          * inherited transcript, jump back to the original chat).
@@ -1419,7 +1728,9 @@ window.__ModuleLoader__.load({
           const turns = record.turns > 0
             ? t(`带入 ${record.turns} 轮对话`, `${record.turns} turns carried over`)
             : t('已带入上下文', 'context carried over')
-          const meta = folded ? `${turns} · ${t('历史已收起', 'history folded')}` : `${turns} · ${t('历史已展开', 'history shown')}`
+          const meta = folded
+            ? `${turns} · ${t('历史已收起（只显示本轮）', 'history folded (current turn only)')}`
+            : `${turns} · ${t('历史已展开', 'history shown')}`
           const planWarning = record.planMode === true && record.parentId !== ''
             ? h('div', { 'data-dsh-fork-planwarn': '', role: 'status' },
               h('span', null, t('源会话在计划模式，此面板会先出计划；要直接回答请先退出计划模式',
@@ -1452,33 +1763,26 @@ window.__ModuleLoader__.load({
           const resource = useResource(tab.contentId)
           const mainSessionId = React.useSyncExternalStore(subscribeMounted, getMounted)
           const tabs = React.useSyncExternalStore(subscribeTabs, getTabs)
+          React.useSyncExternalStore(subscribeForks, forkSnapshot)
           const paneId = resource.value?.id
-          const forked = paneId !== undefined && forkOf(paneId) !== undefined
-          // Start folded: a fork must never flash the inherited transcript while
-          // its Session reference is still resolving. Non-fork panels ignore it.
-          const [folded, setFolded] = useState(true)
+          const record = paneId === undefined ? undefined : forkOf(paneId)
+          const forked = record !== undefined
+          // The registry is the only fold state. The card button and the fold
+          // shortcut change it; talking in the panel never does — a turn said
+          // here is newer than the fold point, so it is never hidden.
+          const folded = forked && record.expanded !== true
+          const cutoff = forked ? record.cutoff : undefined
+          const rootRef = useRef(null)
           const first = tabs.find((entry) => entry.sessionId === sessionId
             && entry.kind === 'panechat' && entry.contentId === tab.contentId)
 
-          // A different Session in the same tab starts from its own recorded state.
-          useEffect(() => {
-            if (paneId === undefined) return
-            const record = forkOf(paneId)
-            setFolded(record !== undefined && record.expanded !== true)
-          }, [paneId])
-
-          // The inherited transcript folds away until the person actually talks
-          // here. A queued or running turn is the reliable signal: it can only
-          // exist because someone typed in this panel, unlike a history scan that
-          // also catches freshly loaded seed events.
-          const paneBinding = paneId === undefined ? undefined : scope.sessions.binding(paneId)
-          const paneSession = useObservable(paneBinding?.session)
-          const speaking = paneSession?.running === true || (paneSession?.pendingSubmissions?.length ?? 0) > 0
-          useEffect(() => {
-            if (paneId === undefined || !folded || !speaking) return
-            setFolded(false)
-            setForkExpanded(paneId, true)
-          }, [paneId, folded, speaking])
+          // Layout effect: carried-over rows get their mark before the first paint.
+          // Non-fork panels and unfolded forks are left alone entirely.
+          React.useLayoutEffect(() => {
+            const root = rootRef.current
+            if (!folded || paneId === undefined || root === null) return undefined
+            return foldTranscript(root, paneId)
+          }, [folded, paneId, cutoff])
 
           let content
           if (resource.status === 'failed') {
@@ -1492,10 +1796,7 @@ window.__ModuleLoader__.load({
           }
 
           function toggle() {
-            if (paneId === undefined) return
-            const next = !folded
-            setFolded(next)
-            setForkExpanded(paneId, !next)
+            if (paneId !== undefined) toggleForkFold(paneId)
           }
 
           function openSource() {
@@ -1508,8 +1809,10 @@ window.__ModuleLoader__.load({
           }
 
           return h('div', {
+            ref: rootRef,
             'data-dsh-pane-chat': '',
             'data-dsh-fork': forked ? (folded ? 'folded' : 'open') : undefined,
+            'data-dsh-fork-pane': forked ? paneId : undefined,
           },
             forked ? h(ForkCard, { sessionId: paneId, folded, onToggle: toggle, onOpenSource: openSource }) : null,
             h('div', { 'data-dsh-pane-body': '' }, content))
