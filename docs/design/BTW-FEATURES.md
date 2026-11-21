@@ -165,6 +165,9 @@ useEffect(() => {
 
 所以判据用**阈值**而不是序号：`turn <= cutoff` 的行属于「带进来的历史」，隐藏；`turn > cutoff` 的行是本面板产生的，永远显示。窗口化后加载的旧 turn 也自然落在阈值下被隐藏。
 
+**已在分叉面板内复验**（2026-11-21 10:0x，宿主 80843，`⌥⌘J` 开分叉后）：`[data-dsh-pane-chat]` 带 `data-dsh-fork="folded"`，内部同样有 **146 个 `[data-chat-turn]` 节点、turn 26–30**（与主区同构）。折叠引擎直接工作在 pane 根节点内即可，不需要跨容器取数。
+
+
 ### 5.4 实现要点
 
 1. **收起点采样**：点「收起历史」那一刻取 `cutoff = max(data-chat-turn)`（没有 turn 行就取 0），写进 fork 登记表 `cutoff` 字段。
