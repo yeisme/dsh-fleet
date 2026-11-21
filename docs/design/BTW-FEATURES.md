@@ -108,6 +108,8 @@
 | v2.1 | `T-btw-v21-fixes` | 三坑：B1 plan 提示条 / B2 三级回退 / B3 分叉复用 | `w2:p5`（pi，magpie group/coding） | 已派发 |
 | v2.2 | `T-btw-v22-closeup` | 合流 F3 + 行标记 F7 + 闲置归档 F8 | 待定 | 排队（等 v2.1 合入） |
 | v2.3 | `T-btw-v23-keymap` | `BTW-KEYMAP.md §4` 全部键位落地 | 待定 | 排队（等 v2.2） |
+| v2.1b | `T-btw-v21b-defects`（待建） | 登记表不落盘 / `panechat.branch` 绑定失效 / 分栏 target 仍取不到 | — | 待排 |
+| F12 | `T-btw-f12-fold` | 折叠只藏带入历史、发消息永不自动展开（§5） | `w1:pP`（claude，frontend lane） | 已派发 2026-11-21 09:5x |
 
 **为什么串行**：三个波次都只改 `client.js` 一个文件，并发改必冲突；herdr 的仓库锁 + `git_paths_only` 断言都按「一次一个人动这个文件」设计。
 
@@ -194,3 +196,14 @@ useEffect(() => {
 | F12-5 | `⌥⌘H` 与卡片按钮行为一致 |
 | F12-6 | 非分叉的普通 panechat 面板不出现 `data-dsh-fork-hid` |
 | F12-7 | 代码里不再有 `speaking` 触发的自动 `setForkExpanded` |
+
+
+### 排期修订（2026-11-21）
+
+F12 与 v2.2/v2.3 都改 `client.js`，但 F12 是**体验级阻塞**（主人每次发言都被强行展开），优先级高于 v2.2 的功能补齐，故插队为独立一波，先派 claude（frontend lane）。
+
+**必修前置（2026-11-19 验收遗留，至今未修）**，建议并入 v2.1b：
+
+1. **登记表不落盘**：实测 `dsh-threads:forks:v1` 恒为 0 条。`rememberFork()` 调了 `saveForks()`，但读到 0 条说明写入被吞或键名不一致 —— F12 的 `cutoff` 与 `expanded` 都存这个登记表，**这条不修 F12 也不会持久**。
+2. **`panechat.branch`（⌥⌘⇧J）无反应**：`tryRegister` 静默跳过，需在回报里列出实际生效键位，或退化为仅命令面板可用并明说。
+3. **分栏 target 仍取不到**：三级回退加了 `active()` 仍落「右栏未打开」，需要改成对 `mounted` 的第一个 docked pane 直接 `split`。
