@@ -1272,12 +1272,12 @@ window.__ModuleLoader__.load({
           'Column too narrow: the fork opened as a tab here (widen the column to split)')
       }
       if (block === 'budget') {
-        return t('右栏已占满两个栏位，分叉已开在同一栏的新标签里',
-          'The column already holds two panes: the fork opened as a tab here')
+        return t('右栏已满（两栏），分叉已开在另一栏的前台',
+          'The sidebar is full (two panes): the fork opened in front in the other pane')
       }
       if (block === 'collapsed') {
-        return t('右栏未打开，已展开右栏并把分叉开在新标签里',
-          'The right sidebar was closed: it is open now, with the fork in a new tab')
+        return t('右栏未打开，已展开右栏并显示分叉',
+          'The right sidebar was closed: it is open now, showing the fork')
       }
       // The fork simply fills an empty pane; nothing to explain.
       if (block === 'empty') return undefined
@@ -1373,10 +1373,44 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Continue one conversation in a panel placed beside it: split the docked
-     * pane to its right and land the panel in the new pane. When the column
-     * cannot split (width, pane budget, no live target) the panel opens as one
-     * more tab in the source pane — never in place of the tab already there.
+     * The other docked pane of the on-screen sidebar.
+     * @param sidebarRight - the sidebar service.
+     * @param paneId - the pane to avoid.
+     * @returns a docked pane id other than `paneId`, or undefined with only one.
+     */
+    function otherDockPane(sidebarRight, paneId) {
+      const sessionId = sidebarRight.mounted.getSnapshot()
+      for (const seat of document.querySelectorAll('[data-sidebar-right-session]')) {
+        if (seat.getAttribute('data-sidebar-right-session') !== sessionId || seat.getClientRects().length === 0) continue
+        for (const pane of seat.querySelectorAll('[data-dockkit-pane]')) {
+          const id = pane.getAttribute('data-dockkit-pane')
+          if (id && id !== paneId) return id
+        }
+      }
+      return undefined
+    }
+
+    /**
+     * Make an opened resource the visible tab of its pane: focus that tab and
+     * the pane holding it.
+     * @param sidebarRight - the sidebar service.
+     * @param address - the resource address the tab shows.
+     */
+    function bringForward(sidebarRight, address) {
+      const sessionId = sidebarRight.mounted.getSnapshot()
+      const entry = sidebarRight.openTabs.getSnapshot()
+        .find((tab) => tab.sessionId === sessionId && tab.contentId === address)
+      if (entry === undefined) return
+      try { sidebarRight.focus(entry.tabId) } catch { /* the placement stands */ }
+    }
+
+    /**
+     * Continue one conversation in a panel placed beside it. The host is asked
+     * to split first — with a target it splits that pane, without one the
+     * active docked pane — and the panel lands in the new pane. When it will
+     * not split, the reason is read from the pane that was asked, and the panel
+     * still lands in front: in the other pane when both are taken, else in the
+     * asked pane. It never ends up as one more tab behind the one in use.
      * @param deps - client services carrying `sessions`, `sidebarRight`, `conversation`.
      * @param sourceId - the conversation the new panel continues.
      * @param options - optional cancellation signal and the element that asked.
@@ -1386,19 +1420,31 @@ window.__ModuleLoader__.load({
       const { sidebarRight } = deps
       const target = forkTarget(sidebarRight, anchor)
       const live = target !== undefined && sidebarRight.isTargetCurrent(target) ? target : undefined
-      const block = live === undefined ? 'stale' : sidebarRight.splitBlock(live)
       const { id } = await continueConversation(deps, sourceId, { signal })
       signal?.throwIfAborted()
       const address = paneAddress(id)
-      const split = live === undefined ? undefined : sidebarRight.split(live.paneId)
-      // Report the reason that actually held: the pre-check may pass while the
-      // split itself still declines (layout or width moved while forking).
-      const refusal = split !== undefined
-        ? undefined
-        : (live === undefined ? block : sidebarRight.splitBlock(live) ?? block)
-      if (split !== undefined) sidebarRight.openResource(address, { paneId: split })
-      else if (live !== undefined) sidebarRight.openResource(address, { paneId: live.paneId })
-      else sidebarRight.openResource(address)
+      const tabKey = (tab) => tab.sessionId + '\n' + tab.tabId
+      const before = new Set(sidebarRight.openTabs.getSnapshot().map(tabKey))
+      // Never gate the split on a target: without one the host splits its active pane.
+      const split = sidebarRight.split(live?.paneId)
+      let refusal
+      let placement = {}
+      if (split !== undefined) {
+        // The host seeds a new pane with a guide tab; the fork takes its place.
+        const owner = sidebarRight.mounted.getSnapshot()
+        const seeded = sidebarRight.openTabs.getSnapshot()
+          .find((tab) => tab.kind === 'guide' && tab.sessionId === owner && !before.has(tabKey(tab)))
+        placement = { paneId: split, ...(seeded === undefined ? {} : { replaceTab: seeded.tabId }) }
+      } else {
+        const asked = live ?? sidebarRight.commandTarget(null)
+        refusal = asked === undefined ? 'stale' : (sidebarRight.splitBlock(asked) ?? 'stale')
+        const paneId = refusal === 'budget'
+          ? (otherDockPane(sidebarRight, asked?.paneId) ?? asked?.paneId)
+          : asked?.paneId
+        if (paneId !== undefined) placement = { paneId }
+      }
+      sidebarRight.openResource(address, placement)
+      bringForward(sidebarRight, address)
       // The panel is the new conversation; put the caret in it.
       try {
         await deps.sessions.using(id, { source: 'paneChat', signal }, (reference) => {
@@ -1437,6 +1483,12 @@ window.__ModuleLoader__.load({
    them with an attribute (an inline style would be overwritten by React); turns
    said in this panel never carry the mark, and the composer is never a turn row. */
 [data-dsh-fork-hid]{display:none !important;}
+/* Folded: the history edge (「加载更早」) would only load turns the fold hides
+   again, and while visible it can page history in on its own. */
+[data-dsh-fork="folded"] [data-chat-history]{display:none !important;}
+/* Folded with nothing said yet: one quiet line where this turn will show. */
+[data-dsh-fork-empty]{flex:none;margin:0;padding:14px 16px 2px;font-size:12px;line-height:1.5;text-align:center;
+  color:var(--dsw-alias-label-secondary);opacity:.8;}
 [data-dsh-fork-planwarn]{display:flex;flex:none;align-items:flex-start;gap:8px;padding:9px 12px;
   border-bottom:1px solid var(--dsw-alias-border-l1);background:rgba(255,196,0,.12);color:var(--dsw-alias-label-primary);
   font-size:12px;line-height:1.4;}
@@ -1838,6 +1890,31 @@ window.__ModuleLoader__.load({
             return foldTranscript(root, paneId)
           }, [folded, paneId, cutoff])
 
+          // Folded and nothing said here yet: the transcript is all hidden rows and
+          // reads like a failed load. Watch for a visible turn row (one the fold
+          // does not mark); until there is one, a quiet line says where it will be.
+          const [quiet, setQuiet] = useState(false)
+          React.useLayoutEffect(() => {
+            const root = rootRef.current
+            if (!folded || root === null) {
+              setQuiet(false)
+              return undefined
+            }
+            let frame = 0
+            const measure = () => {
+              frame = 0
+              setQuiet(root.querySelector('[data-chat-turn]:not([data-dsh-fork-hid])') === null)
+            }
+            measure()
+            // A frame later, so the fold has marked rows that arrived in the same batch.
+            const observer = new MutationObserver(() => { if (frame === 0) frame = requestAnimationFrame(measure) })
+            observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-chat-turn', 'data-dsh-fork-hid'] })
+            return () => {
+              observer.disconnect()
+              if (frame !== 0) cancelAnimationFrame(frame)
+            }
+          }, [folded, paneId])
+
           let content
           if (resource.status === 'failed') {
             content = h('p', { role: 'alert', 'data-dsh-pane-error': '' }, resource.failure.message)
@@ -1869,6 +1946,9 @@ window.__ModuleLoader__.load({
             'data-dsh-fork-pane': forked ? paneId : undefined,
           },
             forked ? h(ForkCard, { sessionId: paneId, folded, onToggle: toggle, onOpenSource: openSource }) : null,
+            folded && quiet && resource.value !== undefined
+              ? h('p', { 'data-dsh-fork-empty': '' }, t('历史已收起 · 在下面提问，本轮会显示在这里', 'History folded · ask below; this turn will show here'))
+              : null,
             h('div', { 'data-dsh-pane-body': '' }, content))
         }
 
@@ -2022,6 +2102,17 @@ window.__ModuleLoader__.load({
           } catch { return false }
         }
 
+        /**
+         * Tabs this chat's column holds beyond its launch pages: zero means the
+         * column was never really used here, so opening it is no news.
+         */
+        function columnContent(owner) {
+          try {
+            return scope.sidebarRight.openTabs.getSnapshot()
+              .filter((tab) => tab.sessionId === owner && tab.kind !== 'guide' && tab.kind !== 'panechat-start').length
+          } catch { return 0 }
+        }
+
         /** Say why, above the chat that asked; a fork command never ends silently. */
         function tell(sessionId, kind, text) {
           const actx = sessionId === undefined ? undefined : scope.sessions.scope(sessionId)
@@ -2099,16 +2190,18 @@ window.__ModuleLoader__.load({
               return
             }
             const showing = sidebarShowing()
+            // Worth a word only when the person closed a column that holds things;
+            // an unused column simply opens with the fork in it.
+            const closedByHand = !showing && columnContent(owner) > 0
             if (!force && openExistingFork(sourceId)) {
-              if (!showing) tell(noticeSession, 'info', t('右栏未打开，已展开右栏并切到已有分叉', 'The right sidebar was closed: it is open now, on the existing fork'))
+              if (closedByHand) tell(noticeSession, 'info', t('右栏未打开，已展开右栏并切到已有分叉', 'The right sidebar was closed: it is open now, on the existing fork'))
               return
             }
             const result = await openForkPaneBeside(scope, sourceId, { anchor })
-            // A closed column is said as such even when the fork split into it.
-            const hint = showing
-              ? (result.block === undefined ? undefined : splitHint(t, result.block))
-              : (result.split ? t('右栏未打开，已为分叉展开右栏', 'The right sidebar was closed: it is open now, with the fork beside')
+            const hint = closedByHand
+              ? (result.split ? t('右栏未打开，已为分叉展开右栏', 'The right sidebar was closed: it is open now, with the fork beside')
                 : splitHint(t, 'collapsed'))
+              : (showing && result.block !== undefined ? splitHint(t, result.block) : undefined)
             if (hint !== undefined) tell(noticeSession, 'info', hint)
           } catch (error) {
             tell(noticeSession, 'error', failureText(error))
