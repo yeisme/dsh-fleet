@@ -1275,8 +1275,61 @@ window.__ModuleLoader__.load({
         return t('右栏已占满两个栏位，分叉已开在同一栏的新标签里',
           'The column already holds two panes: the fork opened as a tab here')
       }
-      return t('右栏未打开，分叉已开在同一栏的新标签里',
-        'The right sidebar is closed: the fork opened as a tab here')
+      if (block === 'collapsed') {
+        return t('右栏未打开，已展开右栏并把分叉开在新标签里',
+          'The right sidebar was closed: it is open now, with the fork in a new tab')
+      }
+      // The fork simply fills an empty pane; nothing to explain.
+      if (block === 'empty') return undefined
+      if (block === 'float') {
+        return t('目标是浮动面板，分叉已开在同一面板的新标签里',
+          'The target pane is floating: the fork opened as a tab in it')
+      }
+      // 'stale': the target moved while forking. The column itself is open, so
+      // never claim it is closed (that misreport is what v2.1b removes).
+      return t('右栏布局刚刚变了，分叉已开在新标签里',
+        'The sidebar layout changed meanwhile: the fork opened as a tab')
+    }
+
+    /**
+     * A live target for one tab of the on-screen sidebar, resolved through the
+     * tab's own element so the host checks the pane, its visibility and the tab
+     * lifetime exactly as it does for focus.
+     * @param sidebarRight - the sidebar service.
+     * @param tabId - the tab; undefined yields undefined.
+     * @returns that tab's pane target, or undefined when it is not on screen.
+     */
+    function tabTarget(sidebarRight, tabId) {
+      const sessionId = sidebarRight.mounted.getSnapshot()
+      if (tabId === undefined || sessionId === undefined) return undefined
+      const id = CSS.escape(String(tabId))
+      for (const seat of document.querySelectorAll('[data-sidebar-right-session]')) {
+        if (seat.getAttribute('data-sidebar-right-session') !== sessionId || seat.getClientRects().length === 0) continue
+        const element = seat.querySelector(`[data-dockkit-tab="${id}"], [data-sidebar-right-tab="${id}"]`)
+        const target = element === null ? undefined : sidebarRight.focusedTarget(element)
+        if (target !== undefined) return target
+      }
+      return undefined
+    }
+
+    /**
+     * Where a fork lands when nothing is focused: the pane that asked, the
+     * focused or command pane, the active tab's pane, and last the pane holding
+     * the first panel chat of the on-screen Session.
+     * @param sidebarRight - the sidebar service.
+     * @param anchor - the element that asked, if any.
+     * @returns a pane target, or undefined when the column has nothing on screen.
+     */
+    function forkTarget(sidebarRight, anchor) {
+      const element = anchor ?? null
+      const direct = sidebarRight.focusedTarget(element) ?? sidebarRight.commandTarget(element)
+      if (direct !== undefined) return direct
+      // `active()` is a tab record, not a target: resolve it through its element.
+      const fromActive = tabTarget(sidebarRight, sidebarRight.active()?.id)
+      if (fromActive !== undefined) return fromActive
+      const owner = sidebarRight.mounted.getSnapshot()
+      const first = sidebarRight.openTabs.getSnapshot().find((entry) => entry.kind === 'panechat' && entry.sessionId === owner)
+      return tabTarget(sidebarRight, first?.tabId)
     }
 
     /**
@@ -1331,7 +1384,7 @@ window.__ModuleLoader__.load({
      */
     async function openForkPaneBeside(deps, sourceId, { signal, anchor } = {}) {
       const { sidebarRight } = deps
-      const target = sidebarRight.focusedTarget(anchor ?? null) ?? sidebarRight.commandTarget(anchor ?? null) ?? sidebarRight.active()
+      const target = forkTarget(sidebarRight, anchor)
       const live = target !== undefined && sidebarRight.isTargetCurrent(target) ? target : undefined
       const block = live === undefined ? 'stale' : sidebarRight.splitBlock(live)
       const { id } = await continueConversation(deps, sourceId, { signal })
@@ -1500,8 +1553,9 @@ window.__ModuleLoader__.load({
               const result = await openForkPaneBeside(scope, owner, { anchor: event.currentTarget })
               if (result.block !== undefined) {
                 const actx = scope.sessions.scope(owner)
-                if (actx !== undefined) {
-                  scope.conversation.input.for(actx).notify('info', splitHint(t, result.block))
+                const hint = splitHint(t, result.block)
+                if (actx !== undefined && hint !== undefined) {
+                  scope.conversation.input.for(actx).notify('info', hint)
                 }
               }
             } catch (error) {
@@ -1939,8 +1993,60 @@ window.__ModuleLoader__.load({
         }, PaneStart)), 'threads: panechat launch body')
       })
 
-      ctx.inject(['conversation', 'sidebarRight', 'remote'], (scope) => {
+      ctx.inject(['conversation', 'sidebarRight', 'remote', 'uiSession', 'layout'], (scope) => {
         const pending = new Set()
+
+        /**
+         * The chat a fork command means: the Session on screen, else the
+         * selected one. A global panel over the main column (plugins, a pinned
+         * workbench) empties `mounted` while the sidebar keeps drawing that
+         * Session's tabs, so `mounted` alone misreads an open column as none.
+         * @returns its id, or undefined when no Session is selected at all.
+         */
+        function mainSession() {
+          const mounted = scope.sidebarRight.mounted.getSnapshot()
+          if (mounted !== undefined) return mounted
+          try {
+            const key = scope.uiSession.adapter.current.getSnapshot()?.key
+            return typeof key === 'string' && key !== '' ? key : undefined
+          } catch { return undefined }
+        }
+
+        /**
+         * Whether the on-screen chat's sidebar is drawn with something in it:
+         * read from the layout, never from focus.
+         */
+        function sidebarShowing() {
+          try {
+            return scope.sidebarRight.isExpanded() && scope.sidebarRight.openTabs.getSnapshot().length > 0
+          } catch { return false }
+        }
+
+        /** Say why, above the chat that asked; a fork command never ends silently. */
+        function tell(sessionId, kind, text) {
+          const actx = sessionId === undefined ? undefined : scope.sessions.scope(sessionId)
+          if (actx === undefined) return
+          try { scope.conversation.input.for(actx).notify(kind, text) } catch { /* nowhere to say it */ }
+        }
+
+        /**
+         * Put the chat back in the main column when a global panel covers it: the
+         * sidebar can only open into the on-screen Session.
+         * @returns 'here' once `owner` is on screen, 'elsewhere' when another chat
+         *   is (replacing it is not this command's call), 'offscreen' otherwise.
+         */
+        async function bringOnScreen(owner) {
+          const { mounted } = scope.sidebarRight
+          if (mounted.getSnapshot() === owner) return 'here'
+          if (mounted.getSnapshot() !== undefined) return 'elsewhere'
+          try { scope.layout.selectPanel(null) } catch { return 'offscreen' }
+          for (let tries = 0; tries < 40 && mounted.getSnapshot() === undefined; tries++) {
+            await new Promise((settle) => setTimeout(settle, 25))
+          }
+          const now = mounted.getSnapshot()
+          return now === owner ? 'here' : (now === undefined ? 'offscreen' : 'elsewhere')
+        }
+
         /**
          * Fork one conversation into a panel beside the owner chat, in the same
          * directory as the source (no directory prompt anywhere), and say so when
@@ -1962,24 +2068,50 @@ window.__ModuleLoader__.load({
           if (tab === undefined) return false
           try {
             scope.sidebarRight.openResource(tab.contentId, { revealIfOpened: true })
-            return true
           } catch { return false }
+          // Reusing a fork means going to it: the caret lands in it, as with a new one.
+          const childId = parsePaneAddress(tab.contentId)
+          scope.sessions.using(childId, { source: 'paneChat' }, (reference) => {
+            scope.conversation.input.for(reference.binding.ctx).focus()
+          }).catch(() => { /* focus is an affordance, never a failure of the reuse */ })
+          return true
         }
 
+        /**
+         * The one open path of ⌥⌘J, ⌥⇧⌘J and /panechat: they differ only in
+         * `force`, which skips reusing an existing fork. Every early exit says why.
+         */
         async function openContinuationFrom(owner, sourceId, noticeSession = owner, anchor, { force = false } = {}) {
-          if (scope.sidebarRight.mounted.getSnapshot() !== owner || pending.has(owner)) return
-          if (!force && openExistingFork(sourceId)) return
+          if (owner === undefined) return
+          if (pending.has(owner)) {
+            tell(noticeSession, 'info', t('正在分叉，请稍候', 'Already forking, one moment'))
+            return
+          }
           pending.add(owner)
           try {
-            if (!force && openExistingFork(sourceId)) return
-            const result = await openForkPaneBeside(scope, sourceId, { anchor })
-            if (result.block !== undefined) {
-              const actx = scope.sessions.scope(noticeSession)
-              if (actx !== undefined) scope.conversation.input.for(actx).notify('info', splitHint(t, result.block))
+            const where = await bringOnScreen(owner)
+            if (where === 'elsewhere') {
+              tell(noticeSession, 'info', t('目标会话已切换，回到要分叉的会话再试', 'The chat on screen changed: go back to the chat to fork and retry'))
+              return
             }
+            if (where === 'offscreen') {
+              tell(noticeSession, 'info', t('主区没有显示这个会话，回到会话后再分叉', 'This chat is not on screen: open it, then fork'))
+              return
+            }
+            const showing = sidebarShowing()
+            if (!force && openExistingFork(sourceId)) {
+              if (!showing) tell(noticeSession, 'info', t('右栏未打开，已展开右栏并切到已有分叉', 'The right sidebar was closed: it is open now, on the existing fork'))
+              return
+            }
+            const result = await openForkPaneBeside(scope, sourceId, { anchor })
+            // A closed column is said as such even when the fork split into it.
+            const hint = showing
+              ? (result.block === undefined ? undefined : splitHint(t, result.block))
+              : (result.split ? t('右栏未打开，已为分叉展开右栏', 'The right sidebar was closed: it is open now, with the fork beside')
+                : splitHint(t, 'collapsed'))
+            if (hint !== undefined) tell(noticeSession, 'info', hint)
           } catch (error) {
-            const actx = scope.sessions.scope(noticeSession)
-            if (actx !== undefined) scope.conversation.input.for(actx).notify('error', failureText(error))
+            tell(noticeSession, 'error', failureText(error))
           } finally {
             pending.delete(owner)
           }
@@ -1999,17 +2131,15 @@ window.__ModuleLoader__.load({
               name,
               label: asThunk(label, name),
               description: asThunk(description, ''),
-              available: () => scope.sidebarRight.mounted.getSnapshot() !== undefined,
+              available: () => mainSession() !== undefined,
               ui: { kind: 'action', run },
             })
             const disposeNew = register('panechat', startTitle, ({ sessionId }) => {
-              const owner = scope.sidebarRight.mounted.getSnapshot()
-              if (owner === undefined) return
+              const owner = mainSession()
               void openContinuationFrom(owner, sessionId ?? owner, sessionId ?? owner)
             })
-            const disposeBranch = register('panechat.branch', t('强制分叉面板', 'Force fork panel'), ({ sessionId }) => {
-              const owner = scope.sidebarRight.mounted.getSnapshot()
-              if (owner === undefined) return
+            const disposeBranch = register('panechat.branch', () => t('强制分叉面板', 'Force fork panel'), ({ sessionId }) => {
+              const owner = mainSession()
               void openContinuationFrom(owner, sessionId ?? owner, sessionId ?? owner, undefined, { force: true })
             })
             return () => { disposeNew(); disposeBranch() }
@@ -2035,11 +2165,13 @@ window.__ModuleLoader__.load({
               label: typeof label === 'function' ? label : () => String(label ?? id),
               aliases,
               defaults: defaults(value),
-              regions: id === 'panechat.branch' ? ['page'] : ['page', 'editable', 'terminal'],
+              // Both fork keys are pressed while typing; on the web a key outside its
+              // regions is passed through without a trace, which was ⌥⇧⌘J's silence.
+              regions: ['page', 'editable', 'terminal'],
               modals: [], resolve,
             })
             const resolve = (force) => () => {
-              const owner = scope.sidebarRight.mounted.getSnapshot()
+              const owner = mainSession()
               if (owner === undefined) return { status: 'blocked', reason: t('先打开一个会话，再分叉面板', 'Open a chat first to fork it into a panel') }
               return { status: 'handled', run: () => { void openContinuationFrom(owner, owner, owner, undefined, { force }) } }
             }
@@ -2055,7 +2187,7 @@ window.__ModuleLoader__.load({
             }
             // Reserve ⇧J for the explicit force action before ordinary new-pane
             // fallbacks consider it. If it conflicts, the force action is command-only.
-            const disposeBranch = tryRegister('panechat.branch', t('强制分叉面板', 'Force fork panel'),
+            const disposeBranch = tryRegister('panechat.branch', () => t('强制分叉面板', 'Force fork panel'),
               ['force fork pane', 'new fork panel'], [branchBinding], resolve(true))
             const disposeNew = tryRegister('panechat.new', startTitle,
               ['fork pane', 'fork chat panel'], [binding, fallback, branchBinding], resolve(false))
