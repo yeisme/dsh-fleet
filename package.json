@@ -11,6 +11,13 @@
     "./icon": "./icon.svg"
   },
   "files": ["index.js", "client.js", "cordis.patch.yml", "locale/*.json", "docs", "icon.svg"],
+  "scripts": {
+    "build": "bun scripts/build.mjs",
+    "build:client": "bun scripts/build.mjs --write-client",
+    "dev": "bun scripts/build.mjs --write-client --watch",
+    "check": "bun scripts/build.mjs --check",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
