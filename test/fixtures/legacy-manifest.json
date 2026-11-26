@@ -1,0 +1,1053 @@
+{
+  "meta": {
+    "recordedFrom": "git e9eb28b:client.js",
+    "harness": 1
+  },
+  "manifest": {
+    "id": "@local/dsh-threads",
+    "requires": [
+      "react",
+      "react-dom"
+    ],
+    "exports": [
+      "apply",
+      "inject"
+    ],
+    "inject": [
+      "slots",
+      "locale",
+      "sessions"
+    ],
+    "calls": [
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: styles"
+        ]
+      },
+      {
+        "dom": "head.appendChild",
+        "el": "STYLE",
+        "attrs": {
+          "data-dsh-threads": ""
+        },
+        "text": {
+          "str": 6895,
+          "sha": "ed41c80ad8"
+        }
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "sidebarRight"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: sidebar handle"
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: prune closed thread status"
+        ]
+      },
+      {
+        "call": "ctx.sidebarRight.openTabs.subscribe",
+        "args": [
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "conversation",
+            "remote"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: follow-up action"
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "sidebarRightTabs"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: tab type"
+        ]
+      },
+      {
+        "call": "ctx.sidebarRightTabs.register",
+        "args": [
+          {
+            "canOpen": {
+              "fn": "canOpen"
+            },
+            "id": "@local/dsh-threads",
+            "kind": "thread",
+            "patterns": [
+              "dsh-resource://thread/pi/**"
+            ],
+            "priority": "extension",
+            "title": {
+              "fn": "title"
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "sidebar.right.pane.tab",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "key": "@local/dsh-threads",
+            "name": "sidebar.right.pane.tab"
+          },
+          {
+            "fn": "ThreadPane"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "sidebar.right.pane.tab.title",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "key": "@local/dsh-threads",
+            "name": "sidebar.right.pane.tab.title"
+          },
+          {
+            "fn": "ThreadTitle"
+          }
+        ]
+      },
+      {
+        "call": "ctx.on",
+        "args": [
+          "command/executed",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.locale.bind",
+        "args": [
+          "workspace"
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat styles"
+        ]
+      },
+      {
+        "dom": "head.appendChild",
+        "el": "STYLE",
+        "attrs": {
+          "data-dsh-pane-styles": ""
+        },
+        "text": {
+          "str": 5010,
+          "sha": "81a71f7a7e"
+        }
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "resources"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat resource"
+        ]
+      },
+      {
+        "call": "ctx.resources.register",
+        "args": [
+          {
+            "open": {
+              "fn": "open"
+            },
+            "protocol": "panechat"
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "sidebarRightTabs"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat tab type"
+        ]
+      },
+      {
+        "call": "ctx.sidebarRightTabs.register",
+        "args": [
+          {
+            "canOpen": {
+              "fn": "canOpen"
+            },
+            "id": "@local/dsh-threads/panechat",
+            "kind": "panechat",
+            "patterns": [
+              "dsh-resource://panechat/session/**"
+            ],
+            "priority": "extension",
+            "title": {
+              "fn": "title"
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat launch page"
+        ]
+      },
+      {
+        "call": "ctx.sidebarRightTabs.register",
+        "args": [
+          {
+            "guide": [
+              {
+                "description": {
+                  "fn": "description"
+                },
+                "id": "new-pane",
+                "order": 10,
+                "title": {
+                  "fn": "startTitle"
+                }
+              }
+            ],
+            "id": "@local/dsh-threads/panechat-start",
+            "kind": "panechat-start",
+            "title": {
+              "fn": "startTitle"
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "slots",
+            "sessions",
+            "sidebarRight",
+            "conversation"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: fork guide card"
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "sidebar.right.tab.guide.entry",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "key": "@local/dsh-threads/panechat-start",
+            "name": "sidebar.right.tab.guide.entry"
+          },
+          {
+            "fn": "ForkGuideCard"
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "resources",
+            "sidebarRight"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: follow fork registry across tabs"
+        ]
+      },
+      {
+        "listener": "window.addEventListener",
+        "type": "storage"
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "commandUi"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: fork fold command"
+        ]
+      },
+      {
+        "call": "ctx.commandUi.register",
+        "args": [
+          {
+            "available": {
+              "fn": "available"
+            },
+            "description": {
+              "fn": "description"
+            },
+            "label": {
+              "fn": "label"
+            },
+            "name": "panechat.fold",
+            "ui": {
+              "kind": "action",
+              "run": {
+                "fn": "run"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "shortcuts"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: fork fold shortcut"
+        ]
+      },
+      {
+        "call": "ctx.shortcuts.register",
+        "args": [
+          {
+            "aliases": [
+              "fold fork history",
+              "show fork history"
+            ],
+            "defaults": {
+              "desktop:macos": {
+                "code": "KeyH",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "desktop:windows": {
+                "code": "KeyH",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "web:macos": {
+                "code": "KeyH",
+                "modifiers": [
+                  "primary",
+                  "alt",
+                  "shift"
+                ]
+              },
+              "web:windows": {
+                "code": "KeyH",
+                "modifiers": [
+                  "primary",
+                  "alt",
+                  "shift"
+                ]
+              }
+            },
+            "id": "panechat.fold",
+            "label": {
+              "fn": "label"
+            },
+            "modals": [],
+            "regions": [
+              "page",
+              "editable",
+              "terminal"
+            ],
+            "resolve": {
+              "fn": "resolve"
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat body"
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "sidebar.right.pane.tab",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "children": {
+              "panechat.conversation": {
+                "kind": "single",
+                "scope": "session"
+              }
+            },
+            "key": "@local/dsh-threads/panechat",
+            "name": "sidebar.right.pane.tab"
+          },
+          {
+            "fn": "PaneChatTab"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: observe panechat focus"
+        ]
+      },
+      {
+        "listener": "document.addEventListener",
+        "type": "focusin"
+      },
+      {
+        "listener": "document.addEventListener",
+        "type": "focusout"
+      },
+      {
+        "listener": "window.addEventListener",
+        "type": "focus"
+      },
+      {
+        "listener": "window.addEventListener",
+        "type": "blur"
+      },
+      {
+        "call": "ctx.sidebarRight.mounted.subscribe",
+        "args": [
+          {
+            "fn": "afterFocusChange"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat title"
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "sidebar.right.pane.tab.title",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "key": "@local/dsh-threads/panechat",
+            "name": "sidebar.right.pane.tab.title"
+          },
+          {
+            "fn": "PaneTitle"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat conversation"
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "panechat.conversation",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "name": "panechat.conversation"
+          },
+          {
+            "fn": "PaneConversation"
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "conversation"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat starter capsules"
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "conversation.composer.dock",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "id": "panechat-starter",
+            "name": "conversation.composer.dock",
+            "order": -10
+          },
+          {
+            "fn": "PaneStarterSlot"
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "remote",
+            "sessions",
+            "sidebarRight",
+            "conversation"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat launch body"
+        ]
+      },
+      {
+        "call": "ctx.slots.inject",
+        "args": [
+          "sidebar.right.pane.tab",
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.slots.register",
+        "args": [
+          {
+            "key": "@local/dsh-threads/panechat-start",
+            "name": "sidebar.right.pane.tab"
+          },
+          {
+            "fn": "PaneStart"
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "conversation",
+            "sidebarRight",
+            "remote",
+            "uiSession",
+            "layout"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "commandUi"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: /panechat commands"
+        ]
+      },
+      {
+        "call": "ctx.commandUi.register",
+        "args": [
+          {
+            "available": {
+              "fn": "available"
+            },
+            "description": {
+              "fn": "description"
+            },
+            "label": {
+              "fn": "startTitle"
+            },
+            "name": "panechat",
+            "ui": {
+              "kind": "action",
+              "run": {
+                "fn": "anonymous"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.commandUi.register",
+        "args": [
+          {
+            "available": {
+              "fn": "available"
+            },
+            "description": {
+              "fn": "description"
+            },
+            "label": {
+              "fn": "anonymous"
+            },
+            "name": "panechat.branch",
+            "ui": {
+              "kind": "action",
+              "run": {
+                "fn": "anonymous"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "shortcuts"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: panechat shortcuts"
+        ]
+      },
+      {
+        "call": "ctx.shortcuts.describeBinding",
+        "args": [
+          {
+            "code": "KeyJ",
+            "modifiers": [
+              "primary",
+              "alt",
+              "shift"
+            ]
+          }
+        ]
+      },
+      {
+        "call": "ctx.shortcuts.register",
+        "args": [
+          {
+            "aliases": [
+              "force fork pane",
+              "new fork panel"
+            ],
+            "defaults": {
+              "desktop:linux": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt",
+                  "shift"
+                ]
+              },
+              "desktop:macos": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt",
+                  "shift"
+                ]
+              },
+              "desktop:windows": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt",
+                  "shift"
+                ]
+              },
+              "web:macos": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt",
+                  "shift"
+                ]
+              },
+              "web:windows": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt",
+                  "shift"
+                ]
+              }
+            },
+            "id": "panechat.branch",
+            "label": {
+              "fn": "anonymous"
+            },
+            "modals": [],
+            "regions": [
+              "page",
+              "editable",
+              "terminal"
+            ],
+            "resolve": {
+              "fn": "anonymous"
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.shortcuts.describeBinding",
+        "args": [
+          {
+            "code": "KeyJ",
+            "modifiers": [
+              "primary",
+              "alt"
+            ]
+          }
+        ]
+      },
+      {
+        "call": "ctx.shortcuts.register",
+        "args": [
+          {
+            "aliases": [
+              "fork pane",
+              "fork chat panel"
+            ],
+            "defaults": {
+              "desktop:linux": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "desktop:macos": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "desktop:windows": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "web:macos": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "web:windows": {
+                "code": "KeyJ",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              }
+            },
+            "id": "panechat.new",
+            "label": {
+              "fn": "startTitle"
+            },
+            "modals": [],
+            "regions": [
+              "page",
+              "editable",
+              "terminal"
+            ],
+            "resolve": {
+              "fn": "anonymous"
+            }
+          }
+        ]
+      },
+      {
+        "call": "ctx.inject",
+        "args": [
+          [
+            "sidebarRight",
+            "shortcuts",
+            "uiSession",
+            "resources"
+          ],
+          {
+            "fn": "anonymous"
+          }
+        ]
+      },
+      {
+        "call": "ctx.effect",
+        "args": [
+          {
+            "fn": "anonymous"
+          },
+          "threads: next attention panel"
+        ]
+      },
+      {
+        "call": "ctx.shortcuts.register",
+        "args": [
+          {
+            "aliases": [
+              "next attention panel",
+              "next pending chat"
+            ],
+            "defaults": {
+              "desktop:macos": {
+                "code": "KeyA",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "desktop:windows": {
+                "code": "KeyA",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "web:macos": {
+                "code": "KeyY",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              },
+              "web:windows": {
+                "code": "KeyY",
+                "modifiers": [
+                  "primary",
+                  "alt"
+                ]
+              }
+            },
+            "id": "panechat.attention",
+            "label": {
+              "fn": "label"
+            },
+            "modals": [],
+            "regions": [
+              "page",
+              "editable",
+              "terminal"
+            ],
+            "resolve": {
+              "fn": "resolve"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
