@@ -1,0 +1,415 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dsh-threads/fleet-contract/v1",
+  "title": "dsh-threads Fleet API contract v1",
+  "description": "Wire shapes of /plugin/fleet/* (see docs/design/FLEET-API.md). Validated with lib/fleet/schema.js (a strict JSON Schema subset). Every object is closed (additionalProperties:false): a host that adds a field must change this file first.",
+
+  "$defs": {
+    "Id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "Ms": { "type": "integer", "minimum": 0 },
+    "Status": { "enum": ["working", "blocked", "done", "idle", "unknown"] },
+    "AgentName": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+
+    "Health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connected", "socket", "version", "protocol", "lastOkAt", "error", "session"],
+      "properties": {
+        "connected": { "type": "boolean" },
+        "socket": { "type": ["string", "null"] },
+        "version": { "type": ["string", "null"] },
+        "protocol": { "type": ["integer", "null"], "minimum": 0 },
+        "lastOkAt": { "type": ["integer", "null"], "minimum": 0 },
+        "error": { "type": ["string", "null"] },
+        "session": { "type": ["string", "null"] }
+      }
+    },
+
+    "Machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": { "id": { "$ref": "#/$defs/Id" }, "label": { "type": "string" } }
+    },
+
+    "Policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["write"],
+      "properties": { "write": { "enum": ["all", "dsh-only", "read-only"] } }
+    },
+
+    "AgentSession": {
+      "description": "How herdr bound this agent to a session. The path/id itself stays on the host: the browser never needs it (transcripts are read through /frames).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source"],
+      "properties": { "kind": { "type": "string" }, "source": { "type": "string" } }
+    },
+
+    "AgentInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "display", "session", "interactiveReady"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "name": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/AgentName" }] },
+        "display": { "type": "string" },
+        "session": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/AgentSession" }] },
+        "interactiveReady": { "type": ["boolean", "null"] }
+      }
+    },
+
+    "Pane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "workspaceId", "tabId", "workspaceLabel", "tabLabel", "title", "cwd", "focused", "agent", "status",
+        "stalled", "completionSeq", "stateChangeSeq", "stateSince", "outputAt", "revision", "summary",
+        "summarySource", "writable", "writableReason"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "workspaceId": { "$ref": "#/$defs/Id" },
+        "tabId": { "$ref": "#/$defs/Id" },
+        "workspaceLabel": { "type": "string" },
+        "tabLabel": { "type": "string" },
+        "title": { "type": "string" },
+        "cwd": { "type": "string" },
+        "focused": { "type": "boolean" },
+        "agent": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/AgentInfo" }] },
+        "status": { "$ref": "#/$defs/Status" },
+        "stalled": { "type": "boolean" },
+        "completionSeq": { "type": "integer", "minimum": 0 },
+        "stateChangeSeq": { "type": "integer", "minimum": 0 },
+        "stateSince": { "$ref": "#/$defs/Ms" },
+        "outputAt": { "type": ["integer", "null"], "minimum": 0 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "summary": { "type": "string", "maxLength": 240 },
+        "summarySource": { "enum": ["transcript", "screen", "none"] },
+        "writable": { "type": "boolean" },
+        "writableReason": { "enum": [null, "not-an-agent", "policy-read-only", "policy-dsh-only", "offline"] }
+      }
+    },
+
+    "Workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "focused", "tabCount", "paneCount"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Id" },
+        "label": { "type": "string" },
+        "focused": { "type": "boolean" },
+        "tabCount": { "type": "integer", "minimum": 0 },
+        "paneCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "Counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocked", "done", "working", "idle", "unknown", "agents", "shells", "panes"],
+      "properties": {
+        "blocked": { "type": "integer", "minimum": 0 },
+        "done": { "type": "integer", "minimum": 0 },
+        "working": { "type": "integer", "minimum": 0 },
+        "idle": { "type": "integer", "minimum": 0 },
+        "unknown": { "type": "integer", "minimum": 0 },
+        "agents": { "type": "integer", "minimum": 0 },
+        "shells": { "type": "integer", "minimum": 0 },
+        "panes": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "State": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "protocol", "revision", "now", "stale", "machine", "health", "policy", "workspaces", "panes", "counts"],
+      "properties": {
+        "ok": { "const": true },
+        "protocol": { "const": 1 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "now": { "$ref": "#/$defs/Ms" },
+        "stale": { "type": "boolean" },
+        "machine": { "$ref": "#/$defs/Machine" },
+        "health": { "$ref": "#/$defs/Health" },
+        "policy": { "$ref": "#/$defs/Policy" },
+        "workspaces": { "type": "array", "items": { "$ref": "#/$defs/Workspace" } },
+        "panes": { "type": "array", "items": { "$ref": "#/$defs/Pane" } },
+        "counts": { "$ref": "#/$defs/Counts" }
+      }
+    },
+
+    "FrameSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "sessionId", "cwd"],
+      "properties": {
+        "kind": { "const": "session" },
+        "id": { "$ref": "#/$defs/Id" },
+        "sessionId": { "type": "string" },
+        "cwd": { "type": "string" }
+      }
+    },
+    "FrameText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "role", "text", "at"],
+      "properties": {
+        "kind": { "const": "text" },
+        "id": { "$ref": "#/$defs/Id" },
+        "role": { "enum": ["user", "assistant", "system"] },
+        "text": { "type": "string" },
+        "at": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "FrameReasoning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "text"],
+      "properties": { "kind": { "const": "reasoning" }, "id": { "$ref": "#/$defs/Id" }, "text": { "type": "string" } }
+    },
+    "WorkRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "object", "outcome", "ms"],
+      "properties": {
+        "verb": { "type": "string" },
+        "object": { "type": "string" },
+        "outcome": { "enum": ["ok", "error", null] },
+        "ms": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "FrameWork": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "summary", "rows", "tokens"],
+      "properties": {
+        "kind": { "const": "work" },
+        "id": { "$ref": "#/$defs/Id" },
+        "summary": { "type": "string" },
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/WorkRow" } },
+        "tokens": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "FrameFinal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "text", "reason", "ms"],
+      "properties": {
+        "kind": { "const": "final" },
+        "id": { "$ref": "#/$defs/Id" },
+        "text": { "type": "string" },
+        "reason": { "type": "string" },
+        "ms": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "Frame": {
+      "oneOf": [
+        { "$ref": "#/$defs/FrameSession" },
+        { "$ref": "#/$defs/FrameText" },
+        { "$ref": "#/$defs/FrameReasoning" },
+        { "$ref": "#/$defs/FrameWork" },
+        { "$ref": "#/$defs/FrameFinal" }
+      ]
+    },
+
+    "FramesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "paneId", "source", "reason", "agentKind", "sessionId", "frames", "hasEarlier", "partial", "reset", "unknownFrames", "cursor"],
+      "properties": {
+        "ok": { "const": true },
+        "paneId": { "$ref": "#/$defs/Id" },
+        "source": { "enum": ["transcript", "screen", "none"] },
+        "reason": { "enum": [null, "no-transcript", "not-yet", "unsupported-agent", "unreadable"] },
+        "agentKind": { "type": ["string", "null"] },
+        "sessionId": { "type": ["string", "null"] },
+        "frames": { "type": "array", "items": { "$ref": "#/$defs/Frame" } },
+        "hasEarlier": { "type": "boolean" },
+        "partial": { "type": "boolean" },
+        "reset": { "type": "boolean" },
+        "unknownFrames": { "type": "integer", "minimum": 0 },
+        "cursor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start", "end"],
+          "properties": { "start": { "type": ["string", "null"] }, "end": { "type": ["string", "null"] } }
+        }
+      }
+    },
+
+    "ScreenResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "paneId", "revision", "format", "text", "cols", "rows", "at"],
+      "properties": {
+        "ok": { "const": true },
+        "paneId": { "$ref": "#/$defs/Id" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "format": { "const": "ansi" },
+        "text": { "type": "string" },
+        "cols": { "type": ["integer", "null"], "minimum": 1 },
+        "rows": { "type": ["integer", "null"], "minimum": 1 },
+        "at": { "$ref": "#/$defs/Ms" }
+      }
+    },
+
+    "Key": {
+      "enum": ["enter", "esc", "tab", "shift+tab", "up", "down", "left", "right", "space", "backspace", "ctrl+c", "ctrl+d", "y", "n", "1", "2", "3", "4"]
+    },
+
+    "PromptRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "pane", "text"],
+      "properties": {
+        "verb": { "const": "prompt" },
+        "pane": { "$ref": "#/$defs/Id" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 20000 }
+      }
+    },
+    "AnswerRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "pane", "text", "enter", "expectRevision"],
+      "properties": {
+        "verb": { "const": "answer" },
+        "pane": { "$ref": "#/$defs/Id" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "enter": { "type": "boolean" },
+        "expectRevision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "KeysRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "pane", "keys", "expectRevision"],
+      "properties": {
+        "verb": { "const": "keys" },
+        "pane": { "$ref": "#/$defs/Id" },
+        "keys": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/$defs/Key" } },
+        "expectRevision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "InterruptRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "pane"],
+      "properties": { "verb": { "const": "interrupt" }, "pane": { "$ref": "#/$defs/Id" } }
+    },
+    "RenameRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "pane", "name"],
+      "properties": {
+        "verb": { "const": "rename" },
+        "pane": { "$ref": "#/$defs/Id" },
+        "name": { "$ref": "#/$defs/AgentName" }
+      }
+    },
+    "RestartRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "pane", "confirm"],
+      "properties": {
+        "verb": { "const": "restart" },
+        "pane": { "$ref": "#/$defs/Id" },
+        "confirm": { "const": true },
+        "thenPrompt": { "type": "string", "minLength": 1, "maxLength": 20000 }
+      }
+    },
+    "CloseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verb", "pane", "confirm"],
+      "properties": {
+        "verb": { "const": "close" },
+        "pane": { "$ref": "#/$defs/Id" },
+        "confirm": { "const": true }
+      }
+    },
+    "ActRequest": {
+      "oneOf": [
+        { "$ref": "#/$defs/PromptRequest" },
+        { "$ref": "#/$defs/AnswerRequest" },
+        { "$ref": "#/$defs/KeysRequest" },
+        { "$ref": "#/$defs/InterruptRequest" },
+        { "$ref": "#/$defs/RenameRequest" },
+        { "$ref": "#/$defs/RestartRequest" },
+        { "$ref": "#/$defs/CloseRequest" }
+      ]
+    },
+
+    "ActResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "verb", "pane", "revision"],
+      "properties": {
+        "ok": { "const": true },
+        "verb": { "enum": ["prompt", "answer", "keys", "interrupt", "rename", "restart", "close"] },
+        "pane": { "$ref": "#/$defs/Id" },
+        "revision": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+
+    "ErrorReason": {
+      "enum": [
+        "forbidden", "method-not-allowed", "unsupported-media-type", "payload-too-large", "invalid-request",
+        "unknown-verb", "unknown-pane", "not-an-agent", "agent-blocked", "not-blocked", "confirm-required",
+        "policy-denied", "key-not-allowed", "screen-changed", "herdr-offline", "herdr-error", "timeout", "internal"
+      ]
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "reason", "message"],
+      "properties": {
+        "ok": { "const": false },
+        "reason": { "$ref": "#/$defs/ErrorReason" },
+        "message": { "type": "string" },
+        "detail": { "type": "object" }
+      }
+    },
+
+    "Scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "frames", "screens"],
+      "properties": {
+        "state": { "$ref": "#/$defs/State" },
+        "frames": { "type": "object", "additionalProperties": { "$ref": "#/$defs/FramesResponse" } },
+        "screens": { "type": "object", "additionalProperties": { "$ref": "#/$defs/ScreenResponse" } }
+      }
+    },
+    "InvalidAct": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["why", "request", "reason"],
+      "properties": {
+        "why": { "type": "string" },
+        "request": {},
+        "reason": { "$ref": "#/$defs/ErrorReason" }
+      }
+    },
+    "FixtureFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["about", "now", "scenarios", "act"],
+      "properties": {
+        "about": { "type": "string" },
+        "now": { "$ref": "#/$defs/Ms" },
+        "scenarios": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Scenario" } },
+        "act": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["valid", "invalid"],
+          "properties": {
+            "valid": { "type": "array", "items": { "$ref": "#/$defs/ActRequest" } },
+            "invalid": { "type": "array", "items": { "$ref": "#/$defs/InvalidAct" } }
+          }
+        }
+      }
+    }
+  }
+}

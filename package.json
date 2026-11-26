@@ -15,7 +15,8 @@
     "build": "bun scripts/build.mjs",
     "build:client": "bun scripts/build.mjs --write-client",
     "dev": "bun scripts/build.mjs --write-client --watch",
-    "check": "bun scripts/build.mjs --check",
+    "check": "bun scripts/build.mjs --check && node scripts/gen-fixtures.mjs --check",
+    "fixtures": "node scripts/gen-fixtures.mjs",
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "dsh": {
