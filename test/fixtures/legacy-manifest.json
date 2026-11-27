@@ -1,10 +1,10 @@
 {
   "meta": {
-    "recordedFrom": "git e9eb28b:client.js",
+    "recordedFrom": "build of src/ (scripts/build.mjs)",
     "harness": 1
   },
   "manifest": {
-    "id": "@local/dsh-threads",
+    "id": "dsh-fleet",
     "requires": [
       "react",
       "react-dom"

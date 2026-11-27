@@ -1,6 +1,6 @@
 # 面板即会话（Pane = Session）· 设计基线 v1
 
-> 2026-11-19 · 针对 `@local/dsh-threads` 的下一版：右栏面板（pane）的输入框与「+ 新建面板」流程。
+> 2026-11-19 · 针对 `dsh-fleet` 的下一版：右栏面板（pane）的输入框与「+ 新建面板」流程。
 > 证据来源：本机 DSH 0.2.2-rc.3 安装源码（`/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/`）、`~/workspace/dsh-threads` 现状审计、Codex Desktop 26.1103 官方文档 + 本机状态文件。
 > 与代码冲突时以本文为准；改设计先改这里。
 
@@ -344,7 +344,7 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 
 > 按本机约定：实现不由会话内直接写，派到独立面板执行。以下七段可直接作为任务 description。
 
-1. **目标**：把 `@local/dsh-threads` 的右栏面板从「自绘线程 + 自绘输入框」改成「面板即会话」：新增 `panechat` 面板类型，面板体渲染 DSH 原生会话（含原生 composer）；`thread` 只读面板删除输入框，换动作条。设计基线：`docs/design/PANE-NATIVE.md`（必须读完再动手，冲突以它为准）。
+1. **目标**：把 `dsh-fleet` 的右栏面板从「自绘线程 + 自绘输入框」改成「面板即会话」：新增 `panechat` 面板类型，面板体渲染 DSH 原生会话（含原生 composer）；`thread` 只读面板删除输入框，换动作条。设计基线：`docs/design/PANE-NATIVE.md`（必须读完再动手，冲突以它为准）。
 2. **信息架构**（不许改层级）：`Surface(右栏 pane) → Tab(kind) → Session`。只允许右栏一个落点；不做底部面板、不做浮动面板。
 3. **演示剧本（逐字文案，照抄）**：`新会话` / `想开什么？` / `新建` / `打开` / `只读（外部会话）` / `接着问 → 开新会话` / `复制上下文` / `该会话由外部终端持有，面板不提供输入框` / `接着问会带上最近 20 条消息（超 8k 截断），在新会话里继续`。
 4. **视觉**：沿用宿主 token，不新造色板；发丝线 0.5px；状态点 6px 四色（`#0A84FF` / `#FF9F0A` / `#30D158` / `#FF453A`）只染点不染行；字阶只有 17/14/13/12/11；数字 `tabular-nums`；玻璃只用于目录选择浮层与 `⌘K`，正文不透明。
@@ -386,7 +386,7 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 | 真发一轮：1 秒完成、回复「收到」、用量 29.4K tok、复制/反馈/分支/上下文视图全在 | ✅ |
 | 宿主是否需重启才能生效 | ❌ **不需要**：`dsh-client-hmr` 每 500ms stat 轮询 graph row 的 bundle，改完自动热替换；实测 combo rev 变为 `43da47067d4e`，`panechat` 命中 21 次 |
 
-证据截图：[`shots/verify-panechat.png`](shots/verify-panechat.png)
+证据截图：[`shots/verify-panechat.jpg`](shots/verify-panechat.jpg)
 
 ### 12.1 本文档 §3.2 的四处 API 与真实签名不一致（以源码为准）
 
@@ -424,7 +424,7 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 | 「接着问」= 新会话 + **草稿**注入 | ✅ 新 tab 的 composer 里出现 `<外部会话上下文>` 前缀（含 `[user]/[assistant]` 逐条），**未自动发送** |
 | 既有线程只读渲染 / `thread` 地址 / 分叉 | ✅ 未回退 |
 
-证据截图：[`shots/verify-p023.png`](shots/verify-p023.png)
+证据截图：[`shots/verify-p023.jpg`](shots/verify-p023.jpg)
 
 ### 13.1 两处新 API（文档原先没写，实现必须知道）
 
@@ -580,7 +580,7 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 2. 正确测法：发消息后 **0.4 秒内切到另一个 tab**，让回合在后台结束。实测随即出现 `data-dsh-pane-state="ready"`，且 `⌥⌘Y` 从别的 tab 一跳命中。
 3. `turn/end.reason` 在契约里是**必填**（`dsh-session/lib/types/types.d.ts:170-216`，正常完成 = `{kind:'completed'}`），所以 §17 里「reason 可能 undefined」的推测也不成立。
 
-**证据**：[`shots/verify-p1-ready.png`](shots/verify-p1-ready.png)（tab strip 上绿点 + 已切走的新会话 tab）。
+**证据**：[`shots/verify-p1-ready.jpg`](shots/verify-p1-ready.jpg)（tab strip 上绿点 + 已切走的新会话 tab）。
 
 ### 19.1 教训（比代码值钱）
 
@@ -734,7 +734,7 @@ ctx.sidebarRight.openResource(`dsh-resource://panechat/session/${id}`)
 | tab 分叉标记 | ✅ 仅分叉 tab 带 `[data-dsh-fork-tabmark]` |
 | 预算退化 | ✅ 第三次分叉时提示「右栏已满，已在同一栏新标签里打开分叉」 |
 
-截图：[`shots/verify-fork-v2.png`](shots/verify-fork-v2.png)
+截图：[`shots/verify-fork-v2.jpg`](shots/verify-fork-v2.jpg)
 
 ### 22.8 已知边界
 

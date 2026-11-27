@@ -34,7 +34,7 @@ import { createHash } from 'node:crypto'
 import { SEEDS } from './seeds.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const MODULE_ID = '@local/dsh-threads'
+const MODULE_ID = 'dsh-fleet'
 const DEFAULT_ENTRY = resolve(ROOT, 'src/main.js')
 const LEGACY_FILE = resolve(ROOT, 'src/legacy/threads-btw.classic.js')
 const LIVE_CLIENT = resolve(ROOT, 'client.js')

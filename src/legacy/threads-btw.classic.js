@@ -6,7 +6,7 @@
  * scripts/build.mjs inlines it as text inside the host's plugin factory, so it keeps sloppy-mode semantics
  * and function-scope hoisting exactly as before (its TDZ workarounds rely on both). Do not add import/export.
  *
- * Original header: "Client half of `@local/dsh-threads`. The right Sidebar hosts native DSH chats and read-only
+ * Original header: "Client half of `dsh-fleet`. The right Sidebar hosts native DSH chats and read-only
  * pi threads streamed from the host routes (herdr panes, disk sessions, or DSH-owned side threads)."
  *
  * Edits that change registrations or injected CSS must also update test/fixtures/legacy-manifest.json

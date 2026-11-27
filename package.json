@@ -1,16 +1,25 @@
 {
-  "name": "@local/dsh-threads",
+  "name": "dsh-fleet",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Read and drive terminal-hosted agent threads (pi sessions, including herdr panes) inside the DSH Web UI.",
+  "description": "在 DSH 里管理 herdr 的 agent 舰队：看会话、看状态、派活、答审批、中断。",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "client.js", "cordis.patch.yml", "locale/*.json", "docs", "icon.svg"],
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "bun scripts/build.mjs",
     "build:client": "bun scripts/build.mjs --write-client",
@@ -20,7 +29,9 @@
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
@@ -29,5 +40,23 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yeisme/dsh-fleet.git"
+  },
+  "homepage": "https://github.com/yeisme/dsh-fleet#readme",
+  "bugs": {
+    "url": "https://github.com/yeisme/dsh-fleet/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "herdr",
+    "agent",
+    "orchestration",
+    "plugin"
+  ],
+  "author": "Yeisme"
 }

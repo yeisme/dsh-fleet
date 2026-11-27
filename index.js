@@ -1,5 +1,5 @@
 /**
- * Host half of `@local/dsh-threads`.
+ * Host half of `dsh-fleet`.
  *
  * A thread is a conversation DSH only READS and RENDERS: a `pi` session JSONL on
  * disk, including the ones bound to live herdr panes. Nothing here is a DSH
