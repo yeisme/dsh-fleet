@@ -14,11 +14,13 @@ import { mkdir, open, readFile, readdir, realpath, stat, writeFile } from 'node:
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { applyFleetHost } from './lib/fleet/host.js'
 
 export const name = 'threads'
 
 /** Services used directly. */
 export const inject = ['webServer', 'connection', 'commands']
+// Fleet host wiring lives in its own module so it can be tested without a host: see lib/fleet/host.js.
 
 const PI_HOME = join(homedir(), '.pi', 'agent', 'sessions')
 const HERDR_STATE = join(homedir(), '.config', 'herdr', 'session.json')
@@ -798,5 +800,13 @@ export function apply(ctx) {
     ctx.effect(() => dispose, 'threads: /btw')
   } catch (error) {
     ctx.logger?.debug?.('threads: /btw left to the retiring bundle: %s', String(error?.message ?? error))
+  }
+
+  // The Fleet routes are additive: a machine with no herdr still gets the thread routes above, and the Fleet page
+  // reports the missing connection honestly. A failure to build the host is logged, never thrown at the host.
+  try {
+    applyFleetHost(ctx)
+  } catch (error) {
+    ctx.logger?.warn?.('fleet: routes not registered: %s', String(error?.message ?? error))
   }
 }
