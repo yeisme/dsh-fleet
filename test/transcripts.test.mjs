@@ -24,7 +24,7 @@ after(() => {
 })
 
 /** A fresh home with the kind's session file written into it (`records`: objects, or raw text/bytes). */
-function setup(kind, records, { home = tempDir(), file = layout[kind](home), eol = '\n' } = {}) {
+function setup(kind, records, { home = tempDir(), id, file = layout[kind](home, { id }), eol = '\n' } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, typeof records === 'string' || Buffer.isBuffer(records) ? records : jsonl(records, eol))
   return { home, file, session: sessionFor(kind, file) }
@@ -75,13 +75,14 @@ function noisy(kind, count) {
 /** The synchronous node:fs surface the reader may use, with the bytes it reads counted; anything else is undefined. */
 const SURFACE = ['realpathSync', 'statSync', 'fstatSync', 'openSync', 'readSync', 'closeSync', 'readdirSync']
 function countingFs() {
-  const stats = { bytes: 0, reads: 0 }
+  const stats = { bytes: 0, reads: 0, ranges: [] }
   const wrapped = { constants: fs.constants }
   for (const name of SURFACE) wrapped[name] = fs[name]
   wrapped.readSync = (...args) => {
     const got = fs.readSync(...args)
     stats.bytes += got
     stats.reads += 1
+    stats.ranges.push({ start: args[4], end: args[4] + got })
     return got
   }
   return { fs: wrapped, stats }
@@ -170,6 +171,31 @@ describe('readFrames arguments', () => {
     assert.equal((await read('pi', world, { limit: 5 })).frames.length, 5)
     assert.equal((await read('pi', world, { limit: 100000 })).frames.length, 19, 'a huge limit is clamped, not an error')
   })
+})
+
+it('caps the earlier-frame lookback at 64 KiB and still reports more history', async () => {
+  const b = builders.pi
+  const budget = 64 * 1024
+  const head = jsonl([...b.header(), b.user(0, at(0), 'older message')])
+  const gap = (' '.repeat(1023) + '\n').repeat(256)
+  const tail = jsonl([b.user(1, at(1), 'latest message')])
+  const world = setup('pi', head + gap + tail)
+  const windowBytes = budget + Buffer.byteLength(tail)
+  const gapStart = Buffer.byteLength(head)
+  const windowStart = gapStart + Buffer.byteLength(gap) - budget
+  assert.ok(windowStart - gapStart > budget)
+
+  const meter = countingFs()
+  const result = await read('pi', world, { fs: meter.fs, windowBytes, limit: 1 })
+  assertContract(result)
+  assert.deepEqual(project(result.frames), [{ kind: 'text', role: 'user', text: 'latest message' }])
+  assert.equal(result.hasEarlier, true)
+
+  // Cursor reads are outside this range. The main window itself reads one boundary byte here.
+  const lookbackBytes = meter.stats.ranges.reduce((total, { start, end }) =>
+    total + Math.max(0, Math.min(end, windowStart) - Math.max(start, gapStart)), 0) - 1
+  assert.ok(lookbackBytes > 0, 'the reader probed before the main window')
+  assert.ok(lookbackBytes <= budget, `lookback read ${lookbackBytes} bytes`)
 })
 
 /* ------------------------------------------------------------------------------------- frames per kind */
@@ -992,7 +1018,8 @@ describe('claude: what its records mean', () => {
   const frames = async (records) => (await read('claude', setup('claude', records))).frames
 
   it('writes no session frame (there is no header record) but knows the session id', async () => {
-    const result = await read('claude', setup('claude', conversation('claude', 1), { file: layout.claude(tempDir(), { id: 'not-a-uuid' }) }))
+    const result = await read('claude', setup('claude', conversation('claude', 1), { id: 'not-a-uuid' }))
+    assert.equal(result.status, 'ok')
     assert.equal(result.frames.some((frame) => frame.kind === 'session'), false)
     assert.equal(result.sessionId, SESSION_ID, 'from the records when the file name is no uuid')
   })
@@ -1167,7 +1194,7 @@ describe('codex: what its records mean', () => {
     const result = await read('codex', world)
     assert.deepEqual(project(result.frames), [
       { kind: 'session', sessionId: SESSION_ID, cwd: CWD },
-      { kind: 'work', summary: 'web_search · shell', rows: [{ verb: 'web_search', object: 'node test runner', outcome: 'ok', ms: 0 }, { verb: 'shell', object: 'git status', outcome: 'ok', ms: 2000 }], tokens: null },
+      { kind: 'work', summary: 'web_search · shell', rows: [{ verb: 'web_search', object: 'node test runner', outcome: 'ok', ms: 0 }, { verb: 'shell', object: 'git status', outcome: 'ok', ms: 1000 }], tokens: null },
       { kind: 'text', role: 'system', text: 'Context compacted' },
     ])
     assert.equal(result.unknownFrames, 1)
