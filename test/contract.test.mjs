@@ -102,6 +102,13 @@ describe('scenario semantics (what the schema cannot express)', () => {
         for (const pane of state.panes) assert.doesNotMatch(pane.title, /^[✳✻✶◐◑◒◓●○◉]\s/u, `${pane.id}: ${pane.title}`)
       })
 
+      it('a plain shell has no agent facts: both sequences are 0, because herdr records them only on agent entries', () => {
+        for (const pane of state.panes.filter((candidate) => candidate.agent === null)) {
+          assert.equal(pane.completionSeq, 0, `${pane.id} completionSeq`)
+          assert.equal(pane.stateChangeSeq, 0, `${pane.id} stateChangeSeq`)
+        }
+      })
+
       it('stalled follows the documented rule: working, has output, silent for over 180 s', () => {
         for (const pane of state.panes) {
           const expected = pane.status === 'working' && pane.outputAt !== null && state.now - pane.outputAt > STALL_MS

@@ -51,8 +51,10 @@ function pane(spec) {
     agent,
     status,
     stalled: status === 'working' && outputAt !== null && NOW - outputAt > STALL_MS,
-    completionSeq: spec.seq ?? 0,
-    stateChangeSeq: spec.change ?? 1,
+    // herdr's snapshot carries these two sequences only on agents[] entries; a plain shell has no entry, so the host
+    // has no real value to publish for it. Zero, not an invented number.
+    completionSeq: agent === null ? 0 : spec.seq ?? 0,
+    stateChangeSeq: agent === null ? 0 : spec.change ?? 1,
     stateSince: NOW - spec.since,
     outputAt,
     revision: spec.rev ?? 1,

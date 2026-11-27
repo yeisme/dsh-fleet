@@ -52,8 +52,8 @@
 | `agent` | `agent` `name` `display_agent` `agent_session` `interactive_ready` | `null` = 普通 shell。`agent.session` 只给 `{kind, source}`，**路径/ID 不出宿主**（浏览器经 `/frames` 读 transcript，用不着） |
 | `status` | `agent_status` | `working` `blocked` `done` `idle` `unknown` 五态；`unknown` 的文案是"未识别"，不推断 |
 | `stalled` | 派生 | `working` 且有过输出且已 **180 秒**无输出；fixtures 与测试按这个阈值 |
-| `completionSeq` | `completion_seq` | 单调。**已读游标只在浏览器本地**；未读 = `status === 'done' && completionSeq > 游标` |
-| `stateChangeSeq` | `state_change_seq` | |
+| `completionSeq` | `completion_seq` | 单调。**已读游标只在浏览器本地**；未读 = `status === 'done' && completionSeq > 游标`。普通 shell 恒为 `0`（herdr 只在 agent 条目上记这个序号） |
+| `stateChangeSeq` | `state_change_seq` | 同上：只有 agent 才有，普通 shell 恒为 `0`，宿主不编造 |
 | `stateSince` `outputAt` | 宿主派生 | 进入当前状态的时刻 / 最近一次输出时刻（未知为 `null`）。宿主重启后 `stateSince` 取首次观察时刻，可能偏晚 |
 | `summary` `summarySource` | 宿主派生 | ≤240 字的"正在干什么"，出处 `transcript` / `screen` / `none`；没有就是空串，**绝不编** |
 | `writable` `writableReason` | 宿主派生 | 见下 |
@@ -108,7 +108,7 @@
 | `keys` | `pane` `keys`(1–8，白名单) `expectRevision` | 按键序列，用于审批（`1`/`y`/`enter`/`esc`…）与屏幕视图的按键条 | revision 未变 | — |
 | `interrupt` | `pane` | 中断当前工作 | — | — |
 | `rename` | `pane` `name` | 设置 agent 名，规则 `[a-z][a-z0-9_-]{0,31}` | — | — |
-| `restart` | `pane` `confirm` `thenPrompt`? | 重启 agent 进程，可选地在重启后发第一条指令 | — | **必须 `true`** |
+| `restart` | `pane` `confirm` `thenPrompt`? | 在该 pane 里**重新拉起** agent，可选地在拉起后发第一条指令。**不会杀掉仍在运行的进程**：agent 还活着时 herdr 会拒绝，宿主如实以 `herdr-error` 报出；要重启一个卡住的 agent，先 `interrupt`，等它回到 shell，再 `restart` | — | **必须 `true`** |
 | `close` | `pane` `confirm` | 关闭 pane | — | **必须 `true`** |
 
 - **只写 agent pane**；普通 shell 只读（`not-an-agent`）。
