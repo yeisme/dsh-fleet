@@ -1,0 +1,30 @@
+# The repo is dependency-free on purpose (see README), so there is nothing to install: CI is just Node + bun scripts.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Tests first: a red suite is the only signal that matters.
+      - name: Test
+        run: bun run test
+      # The bundle is a build artifact that is committed. If it drifts from src/, the plugin ships code nobody reviewed.
+      - name: Build artifact is reproducible and committed
+        run: bun run check
+      # Cheap guard: a syntax error in the host half would only surface when someone loads the plugin.
+      - name: Syntax
+        run: |
+          node --check index.js
+          find lib src scripts -name '*.js' -o -name '*.mjs' | while read -r f; do node --check "$f"; done
