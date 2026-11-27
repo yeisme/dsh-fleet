@@ -29,6 +29,17 @@ const bold = (text) => sgr('1', text)
 
 /* ------------------------------------------------------------------------------------------ builders */
 
+/** A pane nobody has run a gate for: no verdict, no steps. Every fixture pane starts here. */
+const NO_CHECKS = Object.freeze({
+  gate: 'none',
+  startedAt: null,
+  durationMs: null,
+  baseRevision: null,
+  headRevision: null,
+  steps: Object.freeze([]),
+  failure: null,
+})
+
 function pane(spec) {
   const agent = spec.agent === null ? null : {
     kind: spec.agent.kind,
@@ -62,6 +73,7 @@ function pane(spec) {
     summarySource: spec.src ?? 'none',
     writable: spec.writable ?? agent !== null,
     writableReason: spec.writable === false ? spec.reason : agent === null ? 'not-an-agent' : null,
+    checks: spec.checks ?? NO_CHECKS,
   }
 }
 

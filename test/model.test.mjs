@@ -193,6 +193,7 @@ describe('buildState: one pane, field by field', () => {
       summarySource: 'none',
       writable: true,
       writableReason: null,
+      checks: { gate: 'none', startedAt: null, durationMs: null, baseRevision: null, headRevision: null, steps: [], failure: null },
     })
   })
 

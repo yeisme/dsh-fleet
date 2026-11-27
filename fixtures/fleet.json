@@ -75,7 +75,16 @@
             "summary": "等待批准：Bash — rm -rf dist/ && bun run build",
             "summarySource": "screen",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p2",
@@ -103,7 +112,16 @@
             "summary": "12 个测试全部通过",
             "summarySource": "transcript",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p3",
@@ -131,7 +149,16 @@
             "summary": "正在改 src/features/fleet/Roster.jsx",
             "summarySource": "transcript",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w2:p1",
@@ -162,7 +189,16 @@
             "summary": "读取 socket-api.mdx",
             "summarySource": "transcript",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w2:p2",
@@ -190,7 +226,16 @@
             "summary": "汇总 T3 Code 与 Alma 的差异",
             "summarySource": "screen",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w3:p1",
@@ -221,7 +266,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w3:p2",
@@ -249,7 +303,16 @@
             "summary": "已更新 README 的安装一节",
             "summarySource": "screen",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w3:p3",
@@ -277,7 +340,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p4",
@@ -299,7 +371,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "not-an-agent"
+            "writableReason": "not-an-agent",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w2:p3",
@@ -321,7 +402,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "not-an-agent"
+            "writableReason": "not-an-agent",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           }
         ],
         "counts": {
@@ -963,7 +1053,16 @@
             "summary": "等待批准：Bash — rm -rf dist/ && bun run build",
             "summarySource": "screen",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p3",
@@ -991,7 +1090,16 @@
             "summary": "正在改 src/features/fleet/Roster.jsx",
             "summarySource": "transcript",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w2:p1",
@@ -1019,7 +1127,16 @@
             "summary": "等待回答：文件已存在，要覆盖吗？",
             "summarySource": "screen",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p4",
@@ -1041,7 +1158,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "not-an-agent"
+            "writableReason": "not-an-agent",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           }
         ],
         "counts": {
@@ -1443,7 +1569,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w3:p2",
@@ -1471,7 +1606,16 @@
             "summary": "已更新 README 的安装一节",
             "summarySource": "screen",
             "writable": true,
-            "writableReason": null
+            "writableReason": null,
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p4",
@@ -1493,7 +1637,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "not-an-agent"
+            "writableReason": "not-an-agent",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           }
         ],
         "counts": {
@@ -1619,7 +1772,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "not-an-agent"
+            "writableReason": "not-an-agent",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           }
         ],
         "counts": {
@@ -1748,7 +1910,16 @@
             "summary": "等待批准：Bash — rm -rf dist/ && bun run build",
             "summarySource": "screen",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p2",
@@ -1776,7 +1947,16 @@
             "summary": "12 个测试全部通过",
             "summarySource": "transcript",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p3",
@@ -1804,7 +1984,16 @@
             "summary": "正在改 src/features/fleet/Roster.jsx",
             "summarySource": "transcript",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w2:p1",
@@ -1835,7 +2024,16 @@
             "summary": "读取 socket-api.mdx",
             "summarySource": "transcript",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w2:p2",
@@ -1863,7 +2061,16 @@
             "summary": "汇总 T3 Code 与 Alma 的差异",
             "summarySource": "screen",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w3:p1",
@@ -1894,7 +2101,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w3:p2",
@@ -1922,7 +2138,16 @@
             "summary": "已更新 README 的安装一节",
             "summarySource": "screen",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w3:p3",
@@ -1950,7 +2175,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "offline"
+            "writableReason": "offline",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w1:p4",
@@ -1972,7 +2206,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "not-an-agent"
+            "writableReason": "not-an-agent",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           },
           {
             "id": "w2:p3",
@@ -1994,7 +2237,16 @@
             "summary": "",
             "summarySource": "none",
             "writable": false,
-            "writableReason": "not-an-agent"
+            "writableReason": "not-an-agent",
+            "checks": {
+              "gate": "none",
+              "startedAt": null,
+              "durationMs": null,
+              "baseRevision": null,
+              "headRevision": null,
+              "steps": [],
+              "failure": null
+            }
           }
         ],
         "counts": {
