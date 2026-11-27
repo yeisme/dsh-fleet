@@ -2945,7 +2945,8 @@ function Roster({
   searchInputRef,
   onSetPolicy,
   policyUpdating = false,
-  onOpenBotDrawer
+  onOpenBotDrawer,
+  onOpenSpawnDrawer
 }) {
   const [search, setSearch] = import_react2.useState("");
   const [workspaceId, setWorkspaceId] = import_react2.useState("all");
@@ -3058,12 +3059,24 @@ function Roster({
                 placeholder: "搜索 agent / 目录 / 标题… ( / )",
                 "aria-label": "搜索 agent"
               }),
-              typeof onOpenBotDrawer === "function" && /* @__PURE__ */ jsx_runtime2.jsx("button", {
-                type: "button",
-                className: "dsh-fleet-btn dsh-fleet-btn--sm",
-                onClick: onOpenBotDrawer,
-                title: "接入外部个人 Agent Bot",
-                children: "+ 接入 Bot"
+              (typeof onOpenSpawnDrawer === "function" || typeof onOpenBotDrawer === "function") && /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+                className: "dsh-fleet-roster-head-actions",
+                children: [
+                  typeof onOpenSpawnDrawer === "function" && /* @__PURE__ */ jsx_runtime2.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm",
+                    onClick: onOpenSpawnDrawer,
+                    title: "一键派发本地 Agent（支持 Git Worktree 隔离）",
+                    children: "+ 派活"
+                  }),
+                  typeof onOpenBotDrawer === "function" && /* @__PURE__ */ jsx_runtime2.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    onClick: onOpenBotDrawer,
+                    title: "接入外部个人 Agent Bot",
+                    children: "+ 接入 Bot"
+                  })
+                ]
               })
             ]
           }),
@@ -5631,12 +5644,20 @@ var FLEET_CSS = `
 .dsh-fleet-roster-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
 .dsh-fleet-roster-head .dsh-fleet-search {
-  flex: 1 1 auto;
+  flex: 1 1 120px;
   min-width: 0;
+}
+
+.dsh-fleet-roster-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .dsh-fleet-source-pills {
@@ -5906,6 +5927,89 @@ var FLEET_CSS = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+/* Inline Spawn Agent Drawer */
+.dsh-fleet-spawn-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-spawn-grid {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .dsh-fleet-spawn-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.dsh-fleet-spawn-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fleet-text);
+  cursor: pointer;
+  user-select: none;
+  flex-wrap: wrap;
+}
+
+.dsh-fleet-spawn-check input[type="checkbox"] {
+  accent-color: var(--fleet-accent);
+  margin: 0;
+}
+
+.dsh-fleet-spawn-hint {
+  font-size: 11px;
+  color: var(--fleet-text-3);
+  font-family: var(--fleet-mono);
+}
+
+.dsh-fleet-spawn-textarea {
+  width: 100%;
+  min-height: 48px;
+  max-height: 140px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+.dsh-fleet-spawn-textarea:focus {
+  border-color: var(--fleet-accent);
+}
+
+/* Compact 24px bottom keyboard hint strip */
+.dsh-fleet-hintbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 24px;
+  padding: 0 12px;
+  border-top: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text-3);
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  user-select: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6211,6 +6315,15 @@ var SCENARIO_NAMES = Object.freeze([
   "offline",
   "stale"
 ]);
+var SPAWN_KINDS = Object.freeze([
+  "claude",
+  "codex",
+  "pi",
+  "opencode",
+  "gemini",
+  "grok"
+]);
+var SPAWN_KIND_SET = new Set(SPAWN_KINDS);
 var TIME_FIELD_SET = new Set(TIME_FIELDS);
 var KEY_SET = new Set(WHITELIST_KEYS);
 var VERB_SET = new Set(VERBS);
@@ -6428,6 +6541,13 @@ class LiveTransport {
       body: JSON.stringify(bot)
     });
   }
+  async spawn(spec) {
+    return await this._json(`${this.baseUrl}/spawn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(spec)
+    });
+  }
   close() {
     this._listeners.clear();
     this._closeStream();
@@ -6473,6 +6593,7 @@ class FixtureTransport {
     this._now = now;
     this._fixedDelta = typeof delta === "number" ? delta : null;
     this._listeners = new Set;
+    this._dshPanes = new Set;
     this._seq = 1;
     this.setScenario(scenario);
   }
@@ -6484,6 +6605,7 @@ class FixtureTransport {
       throw new Error(`unknown fixture scenario: ${name}`);
     }
     this._scenarioName = name;
+    this._dshPanes.clear();
     const d = this._fixedDelta !== null ? this._fixedDelta : this._now() - this._fixtures.now;
     this._delta = d;
     const raw = this._fixtures.scenarios[name];
@@ -6743,7 +6865,10 @@ class FixtureTransport {
     const write = this._state.policy?.write ?? "read-only";
     const connected = Boolean(this._state.health?.connected);
     const stale = Boolean(this._state.stale);
-    const dshPanes = new Set(this._state.panes.filter((p) => typeof p.agent?.name === "string" && p.agent.name.startsWith("dsh-")).map((p) => p.id));
+    const dshPanes = new Set([
+      ...this._dshPanes,
+      ...this._state.panes.filter((p) => typeof p.agent?.name === "string" && p.agent.name.startsWith("dsh-")).map((p) => p.id)
+    ]);
     for (const pane of this._state.panes) {
       const { writable, reason } = writability({ id: pane.id, isAgent: pane.agent !== null }, { policy: write, dshPanes, connected, stale });
       pane.writable = writable;
@@ -6853,6 +6978,143 @@ class FixtureTransport {
     this._notify();
     return { ok: true, pane: structuredClone(pane) };
   }
+  async spawn(spec) {
+    if (!isPlainObject(spec)) {
+      return { ok: false, status: 400, reason: "invalid-request", message: "请求体必须是对象" };
+    }
+    if (typeof spec.kind !== "string" || !SPAWN_KIND_SET.has(spec.kind)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "invalid-request",
+        message: `不支持的 Agent 类型：${String(spec.kind)}`
+      };
+    }
+    if (typeof spec.cwd !== "string" || spec.cwd.trim() === "") {
+      return {
+        ok: false,
+        status: 400,
+        reason: "invalid-request",
+        message: "工作目录 cwd 必须是非空字符串"
+      };
+    }
+    const rawName = typeof spec.name === "string" ? spec.name.trim() : "";
+    if (rawName && !AGENT_NAME_RE2.test(rawName)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "invalid-request",
+        message: "name 必须匹配 ^[a-z][a-z0-9_-]{0,31}$"
+      };
+    }
+    if (spec.prompt !== undefined && spec.prompt !== null && (typeof spec.prompt !== "string" || spec.prompt.length > 20000)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "invalid-request",
+        message: "prompt 必须是长度不超过 20000 的字符串"
+      };
+    }
+    if (this._state.policy.write === "read-only") {
+      return {
+        ok: false,
+        status: 403,
+        reason: "policy-denied",
+        message: "当前写策略为只读锁定，无法派发新 Agent",
+        detail: { policy: this._state.policy.write }
+      };
+    }
+    if (!this._state.health.connected || this._state.stale) {
+      return {
+        ok: false,
+        status: 503,
+        reason: "herdr-offline",
+        message: "herdr 未连接，无法派发新 Agent"
+      };
+    }
+    const nowMs = this._now();
+    const seq = this._seq++;
+    const agentName = rawName || `dsh-${spec.kind}-${seq}`;
+    const baseCwd = spec.cwd.trim().replace(/\/+$/, "") || "/";
+    const useWorktree = spec.worktree === true;
+    const effectiveCwd = useWorktree ? `${baseCwd === "/" ? "" : baseCwd}/.worktrees/${agentName}` : baseCwd;
+    const worktreeBranch = useWorktree ? `fleet/${agentName}` : null;
+    const promptText = typeof spec.prompt === "string" ? spec.prompt.trim() : "";
+    const firstWs = this._state.workspaces[0];
+    const workspaceId = firstWs?.id ?? "w1";
+    const workspaceLabel = firstWs?.label ?? "dsh-fleet";
+    const paneId = `${workspaceId}:spawn-${seq}`;
+    const pane = {
+      id: paneId,
+      workspaceId,
+      tabId: `${workspaceId}:t1`,
+      workspaceLabel,
+      tabLabel: useWorktree ? `wt:${agentName}` : "main",
+      title: promptText ? promptText.slice(0, 60) : `${spec.kind} · ${agentName}`,
+      cwd: effectiveCwd,
+      focused: false,
+      agent: {
+        kind: spec.kind,
+        name: agentName,
+        display: `${spec.kind} · ${agentName}`,
+        session: null,
+        interactiveReady: true
+      },
+      status: "working",
+      stalled: false,
+      completionSeq: 0,
+      stateChangeSeq: 1,
+      stateSince: nowMs,
+      outputAt: nowMs,
+      revision: 1,
+      summary: promptText ? promptText.slice(0, 240) : useWorktree ? `已在 Git Worktree 启动 (${effectiveCwd})` : `已启动 ${spec.kind} Agent`,
+      summarySource: "transcript",
+      writable: true,
+      writableReason: null,
+      checks: { ...NO_CHECKS, steps: [] }
+    };
+    this._dshPanes.add(paneId);
+    this._state.panes.push(pane);
+    const initFrames = [
+      { kind: "session", id: `spawn-s-${seq}`, sessionId: `spawn-${seq}`, cwd: effectiveCwd }
+    ];
+    if (promptText) {
+      initFrames.push({
+        kind: "text",
+        id: `spawn-u-${seq}`,
+        role: "user",
+        text: promptText,
+        at: nowMs
+      });
+    }
+    this._frames[paneId] = {
+      ok: true,
+      paneId,
+      source: "transcript",
+      reason: null,
+      agentKind: spec.kind,
+      sessionId: `spawn-${seq}`,
+      frames: initFrames,
+      hasEarlier: false,
+      partial: false,
+      reset: false,
+      unknownFrames: 0,
+      cursor: { start: "o:0", end: `o:${seq}` }
+    };
+    this._recomputeWritability();
+    recomputeCountsAndWorkspaces(this._state);
+    this._state.now = nowMs;
+    this._state.revision += 1;
+    this._notify();
+    return {
+      ok: true,
+      pane: structuredClone(pane),
+      kind: spec.kind,
+      name: agentName,
+      cwd: effectiveCwd,
+      worktree: worktreeBranch
+    };
+  }
   close() {
     this._listeners.clear();
   }
@@ -6861,6 +7123,195 @@ class FixtureTransport {
 // src/fleet/fleet-view.jsx
 var jsx_runtime4 = require("react/jsx-runtime");
 var POLICY_LABEL_MAP = Object.fromEntries(POLICY_OPTIONS.map((o) => [o.value, o.label]));
+var SPAWN_UI_KINDS = [
+  { value: "claude", label: "claude" },
+  { value: "codex", label: "codex" },
+  { value: "pi", label: "pi" },
+  { value: "opencode", label: "opencode" }
+];
+function SpawnAgentDrawer({ defaultCwd, onClose, onSpawn }) {
+  const [kind, setKind] = import_react4.useState("claude");
+  const [cwd, setCwd] = import_react4.useState(() => defaultCwd || "~/workspace");
+  const [name, setName] = import_react4.useState("");
+  const [worktree, setWorktree] = import_react4.useState(false);
+  const [prompt, setPrompt] = import_react4.useState("");
+  const [submitting, setSubmitting] = import_react4.useState(false);
+  const [formError, setFormError] = import_react4.useState(null);
+  const previewName = name.trim() || `dsh-${kind}`;
+  const cleanCwd = cwd.trim().replace(/\/+$/, "") || "~/workspace";
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const targetCwd = cwd.trim();
+    if (!targetCwd || submitting) {
+      setFormError("请输入有效的工作目录（cwd）");
+      return;
+    }
+    setFormError(null);
+    setSubmitting(true);
+    try {
+      const payload = {
+        kind,
+        cwd: targetCwd,
+        worktree
+      };
+      if (name.trim())
+        payload.name = name.trim();
+      if (prompt.trim())
+        payload.prompt = prompt.trim();
+      const res = await onSpawn(payload);
+      if (res?.ok) {
+        setName("");
+        setPrompt("");
+        setWorktree(false);
+        onClose();
+      } else {
+        setFormError(res?.message || `派发失败：${res?.reason ?? "unknown"}`);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  return /* @__PURE__ */ jsx_runtime4.jsxs("section", {
+    className: "dsh-fleet-spawn-drawer",
+    "aria-label": "派发 Agent (Spawn Agent)",
+    children: [
+      /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: "dsh-fleet-bot-drawer-head",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsx("strong", {
+            children: "+ 派活 (Spawn Agent)"
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsx("button", {
+            type: "button",
+            className: "dsh-fleet-btn dsh-fleet-btn--sm",
+            onClick: onClose,
+            children: "关闭"
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime4.jsxs("form", {
+        className: "dsh-fleet-bot-form",
+        onSubmit: handleSubmit,
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+            className: "dsh-fleet-spawn-grid",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+                className: "dsh-fleet-field",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                    children: "Agent 类型"
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsx("select", {
+                    className: "dsh-fleet-input",
+                    value: kind,
+                    onChange: (e) => setKind(e.target.value),
+                    disabled: submitting,
+                    "aria-label": "Agent 类型",
+                    children: SPAWN_UI_KINDS.map((opt) => /* @__PURE__ */ jsx_runtime4.jsx("option", {
+                      value: opt.value,
+                      children: opt.label
+                    }, opt.value))
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+                className: "dsh-fleet-field",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                    children: "工作目录 (cwd) *"
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsx("input", {
+                    type: "text",
+                    className: "dsh-fleet-input",
+                    value: cwd,
+                    onChange: (e) => setCwd(e.target.value),
+                    placeholder: "~/workspace",
+                    disabled: submitting
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+                className: "dsh-fleet-field",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                    children: "名称 (可选)"
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsx("input", {
+                    type: "text",
+                    className: "dsh-fleet-input",
+                    value: name,
+                    onChange: (e) => setName(e.target.value),
+                    placeholder: "例如 feat-auth",
+                    disabled: submitting
+                  })
+                ]
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+            className: "dsh-fleet-spawn-check",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsx("input", {
+                type: "checkbox",
+                checked: worktree,
+                onChange: (e) => setWorktree(e.target.checked),
+                disabled: submitting
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                children: "新建 Git Worktree 隔离"
+              }),
+              worktree && /* @__PURE__ */ jsx_runtime4.jsxs("span", {
+                className: "dsh-fleet-spawn-hint",
+                children: [
+                  cleanCwd,
+                  "/.worktrees/",
+                  previewName
+                ]
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+            className: "dsh-fleet-field",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                children: "初始指令 (可选)"
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsx("textarea", {
+                className: "dsh-fleet-spawn-textarea",
+                rows: 2,
+                value: prompt,
+                onChange: (e) => setPrompt(e.target.value),
+                placeholder: "启动后自动发送给该 Agent 的首条任务指令…",
+                disabled: submitting
+              })
+            ]
+          }),
+          formError && /* @__PURE__ */ jsx_runtime4.jsx("div", {
+            className: "dsh-fleet-bot-error",
+            role: "alert",
+            children: formError
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+            className: "dsh-fleet-bot-form-foot",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                className: "dsh-fleet-spawn-hint",
+                children: "启动后自动选中新面板，Esc 可随时收起抽屉"
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsx("button", {
+                type: "submit",
+                className: "dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm",
+                disabled: submitting || !cwd.trim(),
+                children: submitting ? "启动中…" : "立即派发"
+              })
+            ]
+          })
+        ]
+      })
+    ]
+  });
+}
 function buildBotCurlSnippet(baseUrl) {
   const origin = globalThis.location?.origin || "http://127.0.0.1:4310";
   const root = `${origin}${baseUrl || "/plugin/fleet"}`;
@@ -7117,6 +7568,7 @@ function FleetView({
   const [screenLoading, setScreenLoading] = import_react4.useState(false);
   const [policyUpdating, setPolicyUpdating] = import_react4.useState(false);
   const [botDrawerOpen, setBotDrawerOpen] = import_react4.useState(false);
+  const [spawnDrawerOpen, setSpawnDrawerOpen] = import_react4.useState(false);
   const [toast, setToast] = import_react4.useState(null);
   const searchInputRef = import_react4.useRef(null);
   const lastFetchedRef = import_react4.useRef({ paneId: null, revision: null, cursorEnd: null });
@@ -7307,6 +7759,14 @@ function FleetView({
         return;
       if (e.metaKey || e.ctrlKey || e.altKey)
         return;
+      if (e.key === "Escape") {
+        if (botDrawerOpen || spawnDrawerOpen) {
+          e.preventDefault();
+          setBotDrawerOpen(false);
+          setSpawnDrawerOpen(false);
+        }
+        return;
+      }
       if (e.key === "/") {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -7325,7 +7785,7 @@ function FleetView({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [orderedPanes, selectedId]);
+  }, [orderedPanes, selectedId, botDrawerOpen, spawnDrawerOpen]);
   const handleAct = import_react4.useCallback((req) => transport.act(req), [transport]);
   const handleSetPolicy = import_react4.useCallback(async (nextPolicy) => {
     if (typeof transport.setPolicy !== "function")
@@ -7384,6 +7844,30 @@ function FleetView({
       showToast({
         kind: "error",
         text: res?.message || `接入 Bot 失败：${res?.reason ?? "unknown"}`
+      });
+    }
+    return res;
+  }, [transport, showToast]);
+  const handleSpawn = import_react4.useCallback(async (spec) => {
+    if (typeof transport.spawn !== "function") {
+      return { ok: false, reason: "unsupported", message: "当前传输层不支持派发 Agent" };
+    }
+    const res = await transport.spawn(spec);
+    if (res?.ok) {
+      const paneId = typeof res.pane === "string" ? res.pane : res.pane?.id;
+      const label = res.name ? `@${res.name}` : paneId || spec.kind;
+      if (paneId)
+        setSelectedId(paneId);
+      showToast({
+        kind: "success",
+        text: `已派发 ${res.kind || spec.kind} Agent：${label}${res.worktree ? ` · worktree ${res.worktree}` : ""}`,
+        targetPaneId: paneId || undefined,
+        targetLabel: label
+      });
+    } else {
+      showToast({
+        kind: "error",
+        text: res?.message || `派发 Agent 失败：${res?.reason ?? "unknown"}`
       });
     }
     return res;
@@ -7562,6 +8046,11 @@ function FleetView({
           })
         ]
       }),
+      spawnDrawerOpen && /* @__PURE__ */ jsx_runtime4.jsx(SpawnAgentDrawer, {
+        defaultCwd: selectedPane?.cwd || "~/workspace",
+        onClose: () => setSpawnDrawerOpen(false),
+        onSpawn: handleSpawn
+      }),
       botDrawerOpen && /* @__PURE__ */ jsx_runtime4.jsx(BotConnectDrawer, {
         baseUrl: transport.baseUrl,
         onClose: () => setBotDrawerOpen(false),
@@ -7596,11 +8085,28 @@ function FleetView({
               " 个普通终端面板。启动任意 Agent 或接入外部 Bot 后会自动出现在这里。"
             ]
           }),
-          /* @__PURE__ */ jsx_runtime4.jsx("button", {
-            type: "button",
-            className: "dsh-fleet-btn dsh-fleet-btn--primary",
-            onClick: () => setBotDrawerOpen(true),
-            children: "+ 接入外部 Agent Bot"
+          /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+            className: "dsh-fleet-handoff-actions",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsx("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--primary",
+                onClick: () => {
+                  setBotDrawerOpen(false);
+                  setSpawnDrawerOpen(true);
+                },
+                children: "+ 派活 (Spawn Agent)"
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsx("button", {
+                type: "button",
+                className: "dsh-fleet-btn",
+                onClick: () => {
+                  setSpawnDrawerOpen(false);
+                  setBotDrawerOpen(true);
+                },
+                children: "+ 接入外部 Agent Bot"
+              })
+            ]
           })
         ]
       }) : /* @__PURE__ */ jsx_runtime4.jsxs("div", {
@@ -7615,7 +8121,14 @@ function FleetView({
             searchInputRef,
             onSetPolicy: handleSetPolicy,
             policyUpdating,
-            onOpenBotDrawer: () => setBotDrawerOpen((v) => !v)
+            onOpenSpawnDrawer: () => {
+              setBotDrawerOpen(false);
+              setSpawnDrawerOpen((v) => !v);
+            },
+            onOpenBotDrawer: () => {
+              setSpawnDrawerOpen(false);
+              setBotDrawerOpen((v) => !v);
+            }
           }),
           /* @__PURE__ */ jsx_runtime4.jsx(Stage, {
             pane: selectedPane,
@@ -7643,6 +8156,13 @@ function FleetView({
             onClose: () => setInspectorOpen(false)
           })
         ]
+      }),
+      /* @__PURE__ */ jsx_runtime4.jsx("footer", {
+        className: "dsh-fleet-hintbar dsh-fleet-num",
+        "aria-label": "快捷键提示",
+        children: /* @__PURE__ */ jsx_runtime4.jsx("span", {
+          children: "j/k 切换 · ⌘⌥A 跳待处理 · Esc 关闭抽屉"
+        })
       })
     ]
   });

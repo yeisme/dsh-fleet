@@ -118,6 +118,7 @@ export function Roster({
   onSetPolicy,
   policyUpdating = false,
   onOpenBotDrawer,
+  onOpenSpawnDrawer,
 }) {
   const [search, setSearch] = useState('')
   const [workspaceId, setWorkspaceId] = useState('all')
@@ -218,15 +219,29 @@ export function Roster({
             placeholder="搜索 agent / 目录 / 标题… ( / )"
             aria-label="搜索 agent"
           />
-          {typeof onOpenBotDrawer === 'function' && (
-            <button
-              type="button"
-              className="dsh-fleet-btn dsh-fleet-btn--sm"
-              onClick={onOpenBotDrawer}
-              title="接入外部个人 Agent Bot"
-            >
-              + 接入 Bot
-            </button>
+          {(typeof onOpenSpawnDrawer === 'function' || typeof onOpenBotDrawer === 'function') && (
+            <div className="dsh-fleet-roster-head-actions">
+              {typeof onOpenSpawnDrawer === 'function' && (
+                <button
+                  type="button"
+                  className="dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm"
+                  onClick={onOpenSpawnDrawer}
+                  title="一键派发本地 Agent（支持 Git Worktree 隔离）"
+                >
+                  + 派活
+                </button>
+              )}
+              {typeof onOpenBotDrawer === 'function' && (
+                <button
+                  type="button"
+                  className="dsh-fleet-btn dsh-fleet-btn--sm"
+                  onClick={onOpenBotDrawer}
+                  title="接入外部个人 Agent Bot"
+                >
+                  + 接入 Bot
+                </button>
+              )}
+            </div>
           )}
         </div>
         <div className="dsh-fleet-filter-row">

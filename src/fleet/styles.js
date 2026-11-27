@@ -966,12 +966,20 @@ export const FLEET_CSS = `
 .dsh-fleet-roster-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
 .dsh-fleet-roster-head .dsh-fleet-search {
-  flex: 1 1 auto;
+  flex: 1 1 120px;
   min-width: 0;
+}
+
+.dsh-fleet-roster-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .dsh-fleet-source-pills {
@@ -1241,6 +1249,89 @@ export const FLEET_CSS = `
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+/* Inline Spawn Agent Drawer */
+.dsh-fleet-spawn-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-spawn-grid {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .dsh-fleet-spawn-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.dsh-fleet-spawn-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fleet-text);
+  cursor: pointer;
+  user-select: none;
+  flex-wrap: wrap;
+}
+
+.dsh-fleet-spawn-check input[type="checkbox"] {
+  accent-color: var(--fleet-accent);
+  margin: 0;
+}
+
+.dsh-fleet-spawn-hint {
+  font-size: 11px;
+  color: var(--fleet-text-3);
+  font-family: var(--fleet-mono);
+}
+
+.dsh-fleet-spawn-textarea {
+  width: 100%;
+  min-height: 48px;
+  max-height: 140px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+.dsh-fleet-spawn-textarea:focus {
+  border-color: var(--fleet-accent);
+}
+
+/* Compact 24px bottom keyboard hint strip */
+.dsh-fleet-hintbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 24px;
+  padding: 0 12px;
+  border-top: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text-3);
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  user-select: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

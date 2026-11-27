@@ -317,4 +317,89 @@ describe('FixtureTransport', () => {
 
     unsub()
   })
+
+  it('spawn() creates working panes with & without worktree, updates counts/workspaces/revision, and enforces policy/offline/validation refusals', async () => {
+    const transport = new FixtureTransport({ scenario: 'busy', delta: 0 })
+    const snapshots = []
+    const unsub = transport.subscribe((s) => snapshots.push(s))
+    const initialPanes = snapshots[0].panes.length
+    const initialWorking = snapshots[0].counts.working
+    const initialRev = snapshots[0].revision
+
+    // 1. Invalid kind & empty cwd refusals
+    const badKind = await transport.spawn({ kind: 'unknown-cli', cwd: '~/workspace/app' })
+    assert.equal(badKind.ok, false)
+    assert.equal(badKind.status, 400)
+    assert.equal(badKind.reason, 'invalid-request')
+
+    const emptyCwd = await transport.spawn({ kind: 'claude', cwd: '   ' })
+    assert.equal(emptyCwd.ok, false)
+    assert.equal(emptyCwd.status, 400)
+    assert.equal(emptyCwd.reason, 'invalid-request')
+    assert.equal(snapshots.length, 1)
+
+    // 2. Happy path without worktree
+    const plainRes = await transport.spawn({
+      kind: 'claude',
+      cwd: '~/workspace/app',
+      name: 'feat-ui',
+      prompt: '实现快捷键提示栏',
+    })
+    assert.equal(plainRes.ok, true)
+    assert.equal(plainRes.kind, 'claude')
+    assert.equal(plainRes.name, 'feat-ui')
+    assert.equal(plainRes.cwd, '~/workspace/app')
+    assert.equal(plainRes.worktree, null)
+    assert.equal(plainRes.pane.status, 'working')
+    assert.equal(plainRes.pane.cwd, '~/workspace/app')
+    assert.equal(plainRes.pane.agent.kind, 'claude')
+    assert.equal(plainRes.pane.agent.name, 'feat-ui')
+    assert.equal(plainRes.pane.writable, true)
+    assert.equal(snapshots.length, 2)
+    assert.equal(snapshots[1].panes.length, initialPanes + 1)
+    assert.equal(snapshots[1].counts.working, initialWorking + 1)
+    assert.equal(snapshots[1].revision, initialRev + 1)
+
+    const spawnedFrames = await transport.getFrames(plainRes.pane.id)
+    assert.equal(spawnedFrames.ok, true)
+    assert.ok(spawnedFrames.frames.some((f) => f.kind === 'text' && f.text === '实现快捷键提示栏'))
+
+    // 3. Happy path with worktree: true
+    const wtRes = await transport.spawn({
+      kind: 'codex',
+      cwd: '~/workspace/app/',
+      name: 'wt-fix',
+      worktree: true,
+    })
+    assert.equal(wtRes.ok, true)
+    assert.equal(wtRes.kind, 'codex')
+    assert.equal(wtRes.name, 'wt-fix')
+    assert.equal(wtRes.cwd, '~/workspace/app/.worktrees/wt-fix')
+    assert.equal(wtRes.pane.cwd, '~/workspace/app/.worktrees/wt-fix')
+    assert.equal(wtRes.worktree, 'fleet/wt-fix')
+    assert.equal(wtRes.pane.status, 'working')
+    assert.equal(snapshots.length, 3)
+    assert.equal(snapshots[2].panes.length, initialPanes + 2)
+    assert.equal(snapshots[2].counts.working, initialWorking + 2)
+    assert.equal(snapshots[2].revision, initialRev + 2)
+    assert.ok(snapshots[2].workspaces.some((w) => w.id === wtRes.pane.workspaceId && w.paneCount >= 2))
+
+    // 4. Read-only policy refusal
+    await transport.setPolicy('read-only')
+    const countBeforeRo = snapshots.length
+    const roRes = await transport.spawn({ kind: 'pi', cwd: '~/workspace/app' })
+    assert.equal(roRes.ok, false)
+    assert.equal(roRes.status, 403)
+    assert.equal(roRes.reason, 'policy-denied')
+    assert.equal(snapshots.length, countBeforeRo)
+
+    unsub()
+
+    // 5. Offline refusal
+    const offlineTransport = new FixtureTransport({ scenario: 'offline', delta: 0 })
+    const offlineRes = await offlineTransport.spawn({ kind: 'opencode', cwd: '~/workspace/app' })
+    assert.equal(offlineRes.ok, false)
+    assert.equal(offlineRes.status, 503)
+    assert.equal(offlineRes.reason, 'herdr-offline')
+  })
 })

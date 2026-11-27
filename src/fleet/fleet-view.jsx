@@ -17,6 +17,152 @@ import { FixtureTransport, LiveTransport, SCENARIO_NAMES } from './transport.js'
 
 const POLICY_LABEL_MAP = Object.fromEntries(POLICY_OPTIONS.map((o) => [o.value, o.label]))
 
+const SPAWN_UI_KINDS = [
+  { value: 'claude', label: 'claude' },
+  { value: 'codex', label: 'codex' },
+  { value: 'pi', label: 'pi' },
+  { value: 'opencode', label: 'opencode' },
+]
+
+function SpawnAgentDrawer({ defaultCwd, onClose, onSpawn }) {
+  const [kind, setKind] = useState('claude')
+  const [cwd, setCwd] = useState(() => defaultCwd || '~/workspace')
+  const [name, setName] = useState('')
+  const [worktree, setWorktree] = useState(false)
+  const [prompt, setPrompt] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  const previewName = name.trim() || `dsh-${kind}`
+  const cleanCwd = cwd.trim().replace(/\/+$/, '') || '~/workspace'
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    const targetCwd = cwd.trim()
+    if (!targetCwd || submitting) {
+      setFormError('请输入有效的工作目录（cwd）')
+      return
+    }
+    setFormError(null)
+    setSubmitting(true)
+    try {
+      const payload = {
+        kind,
+        cwd: targetCwd,
+        worktree,
+      }
+      if (name.trim()) payload.name = name.trim()
+      if (prompt.trim()) payload.prompt = prompt.trim()
+      const res = await onSpawn(payload)
+      if (res?.ok) {
+        setName('')
+        setPrompt('')
+        setWorktree(false)
+        onClose()
+      } else {
+        setFormError(res?.message || `派发失败：${res?.reason ?? 'unknown'}`)
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section className="dsh-fleet-spawn-drawer" aria-label="派发 Agent (Spawn Agent)">
+      <div className="dsh-fleet-bot-drawer-head">
+        <strong>+ 派活 (Spawn Agent)</strong>
+        <button type="button" className="dsh-fleet-btn dsh-fleet-btn--sm" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+      <form className="dsh-fleet-bot-form" onSubmit={handleSubmit}>
+        <div className="dsh-fleet-spawn-grid">
+          <label className="dsh-fleet-field">
+            <span>Agent 类型</span>
+            <select
+              className="dsh-fleet-input"
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              disabled={submitting}
+              aria-label="Agent 类型"
+            >
+              {SPAWN_UI_KINDS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="dsh-fleet-field">
+            <span>工作目录 (cwd) *</span>
+            <input
+              type="text"
+              className="dsh-fleet-input"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+              placeholder="~/workspace"
+              disabled={submitting}
+            />
+          </label>
+          <label className="dsh-fleet-field">
+            <span>名称 (可选)</span>
+            <input
+              type="text"
+              className="dsh-fleet-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例如 feat-auth"
+              disabled={submitting}
+            />
+          </label>
+        </div>
+
+        <label className="dsh-fleet-spawn-check">
+          <input
+            type="checkbox"
+            checked={worktree}
+            onChange={(e) => setWorktree(e.target.checked)}
+            disabled={submitting}
+          />
+          <span>新建 Git Worktree 隔离</span>
+          {worktree && (
+            <span className="dsh-fleet-spawn-hint">
+              {cleanCwd}/.worktrees/{previewName}
+            </span>
+          )}
+        </label>
+
+        <label className="dsh-fleet-field">
+          <span>初始指令 (可选)</span>
+          <textarea
+            className="dsh-fleet-spawn-textarea"
+            rows={2}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="启动后自动发送给该 Agent 的首条任务指令…"
+            disabled={submitting}
+          />
+        </label>
+
+        {formError && (
+          <div className="dsh-fleet-bot-error" role="alert">{formError}</div>
+        )}
+
+        <div className="dsh-fleet-bot-form-foot">
+          <span className="dsh-fleet-spawn-hint">
+            启动后自动选中新面板，Esc 可随时收起抽屉
+          </span>
+          <button
+            type="submit"
+            className="dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm"
+            disabled={submitting || !cwd.trim()}
+          >
+            {submitting ? '启动中…' : '立即派发'}
+          </button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
 function buildBotCurlSnippet(baseUrl) {
   const origin = globalThis.location?.origin || 'http://127.0.0.1:4310'
   const root = `${origin}${baseUrl || '/plugin/fleet'}`
@@ -221,6 +367,7 @@ export function FleetView({
   const [screenLoading, setScreenLoading] = useState(false)
   const [policyUpdating, setPolicyUpdating] = useState(false)
   const [botDrawerOpen, setBotDrawerOpen] = useState(false)
+  const [spawnDrawerOpen, setSpawnDrawerOpen] = useState(false)
   const [toast, setToast] = useState(null) // { kind: 'success' | 'error' | 'info', text, targetPaneId?, targetLabel? }
 
   const searchInputRef = useRef(null)
@@ -414,12 +561,20 @@ export function FleetView({
     return () => { cancelled = true }
   }, [transport, screenNeeded, selectedPane?.id, selectedPane?.revision])
 
-  // Keyboard navigation (j/k, ↑/↓, / to search) when focus is not in an editable field.
+  // Keyboard navigation (j/k, ↑/↓, / to search, Escape to close drawers) when focus is not in an editable field.
   useEffect(() => {
     function onKeyDown(e) {
       const tag = e.target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'Escape') {
+        if (botDrawerOpen || spawnDrawerOpen) {
+          e.preventDefault()
+          setBotDrawerOpen(false)
+          setSpawnDrawerOpen(false)
+        }
+        return
+      }
       if (e.key === '/') {
         e.preventDefault()
         searchInputRef.current?.focus()
@@ -437,7 +592,7 @@ export function FleetView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [orderedPanes, selectedId])
+  }, [orderedPanes, selectedId, botDrawerOpen, spawnDrawerOpen])
 
   const handleAct = useCallback((req) => transport.act(req), [transport])
 
@@ -501,6 +656,30 @@ export function FleetView({
       showToast({
         kind: 'error',
         text: res?.message || `接入 Bot 失败：${res?.reason ?? 'unknown'}`,
+      })
+    }
+    return res
+  }, [transport, showToast])
+
+  const handleSpawn = useCallback(async (spec) => {
+    if (typeof transport.spawn !== 'function') {
+      return { ok: false, reason: 'unsupported', message: '当前传输层不支持派发 Agent' }
+    }
+    const res = await transport.spawn(spec)
+    if (res?.ok) {
+      const paneId = typeof res.pane === 'string' ? res.pane : res.pane?.id
+      const label = res.name ? `@${res.name}` : (paneId || spec.kind)
+      if (paneId) setSelectedId(paneId)
+      showToast({
+        kind: 'success',
+        text: `已派发 ${res.kind || spec.kind} Agent：${label}${res.worktree ? ` · worktree ${res.worktree}` : ''}`,
+        targetPaneId: paneId || undefined,
+        targetLabel: label,
+      })
+    } else {
+      showToast({
+        kind: 'error',
+        text: res?.message || `派发 Agent 失败：${res?.reason ?? 'unknown'}`,
       })
     }
     return res
@@ -631,6 +810,15 @@ export function FleetView({
         </div>
       )}
 
+      {/* Inline Spawn Agent Drawer */}
+      {spawnDrawerOpen && (
+        <SpawnAgentDrawer
+          defaultCwd={selectedPane?.cwd || '~/workspace'}
+          onClose={() => setSpawnDrawerOpen(false)}
+          onSpawn={handleSpawn}
+        />
+      )}
+
       {/* Inline External Bot Connect Drawer */}
       {botDrawerOpen && (
         <BotConnectDrawer
@@ -653,9 +841,28 @@ export function FleetView({
         <div className="dsh-fleet-empty">
           <strong>还没有运行中的 Agent Bot</strong>
           <span>herdr 已连接，当前仅有 {counts?.shells ?? 0} 个普通终端面板。启动任意 Agent 或接入外部 Bot 后会自动出现在这里。</span>
-          <button type="button" className="dsh-fleet-btn dsh-fleet-btn--primary" onClick={() => setBotDrawerOpen(true)}>
-            + 接入外部 Agent Bot
-          </button>
+          <div className="dsh-fleet-handoff-actions">
+            <button
+              type="button"
+              className="dsh-fleet-btn dsh-fleet-btn--primary"
+              onClick={() => {
+                setBotDrawerOpen(false)
+                setSpawnDrawerOpen(true)
+              }}
+            >
+              + 派活 (Spawn Agent)
+            </button>
+            <button
+              type="button"
+              className="dsh-fleet-btn"
+              onClick={() => {
+                setSpawnDrawerOpen(false)
+                setBotDrawerOpen(true)
+              }}
+            >
+              + 接入外部 Agent Bot
+            </button>
+          </div>
         </div>
       ) : (
         <div className={`dsh-fleet-body ${inspectorOpen && selectedPane ? '' : 'dsh-fleet-body--no-inspector'}`}>
@@ -668,7 +875,14 @@ export function FleetView({
             searchInputRef={searchInputRef}
             onSetPolicy={handleSetPolicy}
             policyUpdating={policyUpdating}
-            onOpenBotDrawer={() => setBotDrawerOpen((v) => !v)}
+            onOpenSpawnDrawer={() => {
+              setBotDrawerOpen(false)
+              setSpawnDrawerOpen((v) => !v)
+            }}
+            onOpenBotDrawer={() => {
+              setSpawnDrawerOpen(false)
+              setBotDrawerOpen((v) => !v)
+            }}
           />
           <Stage
             pane={selectedPane}
@@ -699,6 +913,11 @@ export function FleetView({
           )}
         </div>
       )}
+
+      {/* Compact bottom keyboard hint strip */}
+      <footer className="dsh-fleet-hintbar dsh-fleet-num" aria-label="快捷键提示">
+        <span>j/k 切换 · ⌘⌥A 跳待处理 · Esc 关闭抽屉</span>
+      </footer>
     </div>
   )
 }

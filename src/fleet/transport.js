@@ -262,6 +262,12 @@ export const SCENARIO_NAMES = Object.freeze([
   'busy', 'blocked', 'calm', 'empty', 'offline', 'stale',
 ])
 
+export const SPAWN_KINDS = Object.freeze([
+  'claude', 'codex', 'pi', 'opencode', 'gemini', 'grok',
+])
+
+const SPAWN_KIND_SET = new Set(SPAWN_KINDS)
+
 const TIME_FIELD_SET = new Set(TIME_FIELDS)
 const KEY_SET = new Set(WHITELIST_KEYS)
 const VERB_SET = new Set(VERBS)
@@ -512,6 +518,14 @@ export class LiveTransport {
     })
   }
 
+  async spawn(spec) {
+    return await this._json(`${this.baseUrl}/spawn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(spec),
+    })
+  }
+
   close() {
     this._listeners.clear()
     this._closeStream()
@@ -558,6 +572,7 @@ export class FixtureTransport {
     this._now = now
     this._fixedDelta = typeof delta === 'number' ? delta : null
     this._listeners = new Set()
+    this._dshPanes = new Set()
     this._seq = 1
     this.setScenario(scenario)
   }
@@ -571,6 +586,7 @@ export class FixtureTransport {
       throw new Error(`unknown fixture scenario: ${name}`)
     }
     this._scenarioName = name
+    this._dshPanes.clear()
     const d = this._fixedDelta !== null ? this._fixedDelta : this._now() - this._fixtures.now
     this._delta = d
     const raw = this._fixtures.scenarios[name]
@@ -836,11 +852,12 @@ export class FixtureTransport {
     const write = this._state.policy?.write ?? 'read-only'
     const connected = Boolean(this._state.health?.connected)
     const stale = Boolean(this._state.stale)
-    const dshPanes = new Set(
-      this._state.panes
+    const dshPanes = new Set([
+      ...this._dshPanes,
+      ...this._state.panes
         .filter((p) => typeof p.agent?.name === 'string' && p.agent.name.startsWith('dsh-'))
         .map((p) => p.id),
-    )
+    ])
     for (const pane of this._state.panes) {
       const { writable, reason } = writability(
         { id: pane.id, isAgent: pane.agent !== null },
@@ -968,6 +985,154 @@ export class FixtureTransport {
     this._state.revision += 1
     this._notify()
     return { ok: true, pane: structuredClone(pane) }
+  }
+
+  async spawn(spec) {
+    if (!isPlainObject(spec)) {
+      return { ok: false, status: 400, reason: 'invalid-request', message: '请求体必须是对象' }
+    }
+    if (typeof spec.kind !== 'string' || !SPAWN_KIND_SET.has(spec.kind)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-request',
+        message: `不支持的 Agent 类型：${String(spec.kind)}`,
+      }
+    }
+    if (typeof spec.cwd !== 'string' || spec.cwd.trim() === '') {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-request',
+        message: '工作目录 cwd 必须是非空字符串',
+      }
+    }
+    const rawName = typeof spec.name === 'string' ? spec.name.trim() : ''
+    if (rawName && !AGENT_NAME_RE.test(rawName)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-request',
+        message: 'name 必须匹配 ^[a-z][a-z0-9_-]{0,31}$',
+      }
+    }
+    if (spec.prompt !== undefined && spec.prompt !== null && (typeof spec.prompt !== 'string' || spec.prompt.length > 20000)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-request',
+        message: 'prompt 必须是长度不超过 20000 的字符串',
+      }
+    }
+    if (this._state.policy.write === 'read-only') {
+      return {
+        ok: false,
+        status: 403,
+        reason: 'policy-denied',
+        message: '当前写策略为只读锁定，无法派发新 Agent',
+        detail: { policy: this._state.policy.write },
+      }
+    }
+    if (!this._state.health.connected || this._state.stale) {
+      return {
+        ok: false,
+        status: 503,
+        reason: 'herdr-offline',
+        message: 'herdr 未连接，无法派发新 Agent',
+      }
+    }
+
+    const nowMs = this._now()
+    const seq = this._seq++
+    const agentName = rawName || `dsh-${spec.kind}-${seq}`
+    const baseCwd = spec.cwd.trim().replace(/\/+$/, '') || '/'
+    const useWorktree = spec.worktree === true
+    const effectiveCwd = useWorktree
+      ? `${baseCwd === '/' ? '' : baseCwd}/.worktrees/${agentName}`
+      : baseCwd
+    const worktreeBranch = useWorktree ? `fleet/${agentName}` : null
+    const promptText = typeof spec.prompt === 'string' ? spec.prompt.trim() : ''
+
+    const firstWs = this._state.workspaces[0]
+    const workspaceId = firstWs?.id ?? 'w1'
+    const workspaceLabel = firstWs?.label ?? 'dsh-fleet'
+    const paneId = `${workspaceId}:spawn-${seq}`
+
+    const pane = {
+      id: paneId,
+      workspaceId,
+      tabId: `${workspaceId}:t1`,
+      workspaceLabel,
+      tabLabel: useWorktree ? `wt:${agentName}` : 'main',
+      title: promptText ? promptText.slice(0, 60) : `${spec.kind} · ${agentName}`,
+      cwd: effectiveCwd,
+      focused: false,
+      agent: {
+        kind: spec.kind,
+        name: agentName,
+        display: `${spec.kind} · ${agentName}`,
+        session: null,
+        interactiveReady: true,
+      },
+      status: 'working',
+      stalled: false,
+      completionSeq: 0,
+      stateChangeSeq: 1,
+      stateSince: nowMs,
+      outputAt: nowMs,
+      revision: 1,
+      summary: promptText
+        ? promptText.slice(0, 240)
+        : (useWorktree ? `已在 Git Worktree 启动 (${effectiveCwd})` : `已启动 ${spec.kind} Agent`),
+      summarySource: 'transcript',
+      writable: true,
+      writableReason: null,
+      checks: { ...NO_CHECKS, steps: [] },
+    }
+
+    this._dshPanes.add(paneId)
+    this._state.panes.push(pane)
+
+    const initFrames = [
+      { kind: 'session', id: `spawn-s-${seq}`, sessionId: `spawn-${seq}`, cwd: effectiveCwd },
+    ]
+    if (promptText) {
+      initFrames.push({
+        kind: 'text',
+        id: `spawn-u-${seq}`,
+        role: 'user',
+        text: promptText,
+        at: nowMs,
+      })
+    }
+    this._frames[paneId] = {
+      ok: true,
+      paneId,
+      source: 'transcript',
+      reason: null,
+      agentKind: spec.kind,
+      sessionId: `spawn-${seq}`,
+      frames: initFrames,
+      hasEarlier: false,
+      partial: false,
+      reset: false,
+      unknownFrames: 0,
+      cursor: { start: 'o:0', end: `o:${seq}` },
+    }
+
+    this._recomputeWritability()
+    recomputeCountsAndWorkspaces(this._state)
+    this._state.now = nowMs
+    this._state.revision += 1
+    this._notify()
+    return {
+      ok: true,
+      pane: structuredClone(pane),
+      kind: spec.kind,
+      name: agentName,
+      cwd: effectiveCwd,
+      worktree: worktreeBranch,
+    }
   }
 
   close() {

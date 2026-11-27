@@ -19,6 +19,7 @@ import { HerdrClient } from './lib/herdr/protocol.js'
 import { HerdrState } from './lib/herdr/state.js'
 import { FleetStore } from './lib/fleet/store.js'
 import { FleetService } from './lib/fleet/service.js'
+import { createBotCommand } from './lib/fleet/spawn.js'
 import { ProviderRegistry } from './lib/fleet/providers/registry.js'
 import { ExternalBotProvider } from './lib/fleet/providers/external-bots.js'
 import { installBotRoutes } from './lib/fleet/bots-http.js'
@@ -836,6 +837,7 @@ export function apply(ctx) {
     })
     installFleetRoutes(ctx, { service: fleetService })
     installBotRoutes(ctx, { provider: botProvider })
+    ctx.effect(() => ctx.commands.register(createBotCommand(fleetService)), 'fleet: /bot')
     ctx.effect(() => {
       void fleetRegistry.start().catch((error) => {
         ctx.logger?.warn?.('fleet: registry start failed: %s', String(error?.name ?? 'Error'))
