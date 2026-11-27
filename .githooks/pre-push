@@ -1,0 +1,25 @@
+#!/bin/sh
+# Pre-push guard: the full suite, once per push instead of once per commit.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# Why here and not in pre-commit: the suite takes several seconds. On every commit that trains people to reach for
+# --no-verify; at push time the cost is paid once and the red suite is caught before it is public.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+if ! command -v bun >/dev/null 2>&1; then
+  printf 'pre-push: bun not found, skipping the test suite\n' >&2
+  exit 0
+fi
+
+if ! bun run test >/tmp/dsh-fleet-pre-push.log 2>&1; then
+  tail -30 /tmp/dsh-fleet-pre-push.log >&2
+  printf '\n\033[31mpre-push: tests failed, not pushing.\033[0m\n' >&2
+  printf 'Full log: /tmp/dsh-fleet-pre-push.log\n\n' >&2
+  exit 1
+fi
+
+grep -E '^ℹ (tests|pass|fail)' /tmp/dsh-fleet-pre-push.log >&2 || true

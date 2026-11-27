@@ -73,6 +73,20 @@ bun add link:/path/to/dsh-fleet
 
 ## 开发
 
+### 打开本地钩子（每个 clone 一次）
+
+```bash
+git config core.hooksPath .githooks
+```
+
+两道闸，各自拦一类真出过的事：
+
+| 钩子 | 拦什么 | 为什么不换个位置 |
+|---|---|---|
+| `pre-commit` | `client.js` 与 `src/` 漂移、`fixtures/` 过期、暂存文件语法错、**个人路径/内网地址** | 这些都是几秒能查完的；放进 CI 就太晚——公开仓的泄露 push 出去就撤不回 |
+| `pre-push` | 全量测试套件 | 套件跑几秒。放在每次提交会逼人用 `--no-verify`，放在 push 只付一次 |
+
+
 ```bash
 bun run build        # 构建 src/ → dist/client.js
 bun run build:client # 构建并写回 client.js（宿主 HMR 会热替换）
