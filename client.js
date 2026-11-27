@@ -2381,13 +2381,15 @@ var import_react4 = require("react");
 var STALL_MS = 180000;
 var ATTENTION_GROUPS = Object.freeze({
   blocked: 0,
-  unread: 1,
-  stalled: 2,
-  working: 3,
-  unknown: 4,
-  read: 5,
-  idle: 6,
-  shell: 7
+  verifyFailed: 1,
+  unread: 2,
+  stalled: 3,
+  working: 4,
+  verifyRunning: 5,
+  unknown: 6,
+  read: 7,
+  idle: 8,
+  shell: 9
 });
 var finite = (value) => typeof value === "number" && Number.isFinite(value);
 function isStalled(pane, now = Date.now(), stallMs = STALL_MS) {
@@ -2408,10 +2410,14 @@ function isUnread(pane, seen = {}) {
 function attentionGroup(pane, { now = Date.now(), stallMs = STALL_MS, seen = {} } = {}) {
   if (pane?.agent === null)
     return ATTENTION_GROUPS.shell;
+  if (pane?.checks?.gate === "running")
+    return ATTENTION_GROUPS.verifyRunning;
   switch (pane?.status) {
     case "blocked":
       return ATTENTION_GROUPS.blocked;
     case "done":
+      if (pane?.checks?.gate === "failed")
+        return ATTENTION_GROUPS.verifyFailed;
       return isUnread(pane, seen) ? ATTENTION_GROUPS.unread : ATTENTION_GROUPS.read;
     case "working":
       return isStalled(pane, now, stallMs) ? ATTENTION_GROUPS.stalled : ATTENTION_GROUPS.working;

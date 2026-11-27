@@ -102,29 +102,55 @@ describe('isSeen / isUnread (the read cursor lives in the browser: { [paneId]: l
 })
 
 describe('attentionGroup', () => {
-  it('ranks: blocked 0, unread done 1, stalled 2, working 3, unknown 4, read done 5, idle 6, shell 7', () => {
-    assert.deepEqual({ ...ATTENTION_GROUPS }, { blocked: 0, unread: 1, stalled: 2, working: 3, unknown: 4, read: 5, idle: 6, shell: 7 })
+  it('ranks: blocked 0, verifyFailed 1, unread 2, stalled 3, working 4, verifyRunning 5, unknown 6, read 7, idle 8, shell 9', () => {
+    assert.deepEqual({ ...ATTENTION_GROUPS }, { blocked: 0, verifyFailed: 1, unread: 2, stalled: 3, working: 4, verifyRunning: 5, unknown: 6, read: 7, idle: 8, shell: 9 })
     assert.equal(attentionGroup(pane({ status: 'blocked' }), ctx), 0)
-    assert.equal(attentionGroup(pane({ status: 'done', completionSeq: 5 }), ctx), 1)
-    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - 5 * MIN }), ctx), 2)
-    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - 1 * SEC }), ctx), 3)
-    assert.equal(attentionGroup(pane({ status: 'unknown' }), ctx), 4)
-    assert.equal(attentionGroup(pane({ status: 'done', completionSeq: 5 }), { ...ctx, seen: { 'w1:p1': 5 } }), 5)
-    assert.equal(attentionGroup(pane({ status: 'idle' }), ctx), 6)
-    assert.equal(attentionGroup(shell(), ctx), 7)
+    assert.equal(attentionGroup(pane({ status: 'done', completionSeq: 5, checks: { gate: 'failed' } }), ctx), 1)
+    assert.equal(attentionGroup(pane({ status: 'done', completionSeq: 5 }), ctx), 2)
+    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - 5 * MIN }), ctx), 3)
+    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - 1 * SEC }), ctx), 4)
+    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - 1 * SEC, checks: { gate: 'running' } }), ctx), 5)
+    assert.equal(attentionGroup(pane({ status: 'unknown' }), ctx), 6)
+    assert.equal(attentionGroup(pane({ status: 'done', completionSeq: 5 }), { ...ctx, seen: { 'w1:p1': 5 } }), 7)
+    assert.equal(attentionGroup(pane({ status: 'idle' }), ctx), 8)
+    assert.equal(attentionGroup(shell(), ctx), 9)
+  })
+
+  it('a failed gate on a finished pane outranks "unseen", because the row looks done and only the badge says otherwise', () => {
+    const failed = pane({ status: 'done', completionSeq: 5, checks: { gate: 'failed' } })
+    assert.equal(attentionGroup(failed, ctx), ATTENTION_GROUPS.verifyFailed)
+    assert.ok(ATTENTION_GROUPS.verifyFailed < ATTENTION_GROUPS.unread)
+    // Once seen it stays verifyFailed: reading the transcript does not make a red gate go green.
+    assert.equal(attentionGroup(failed, { ...ctx, seen: { 'w1:p1': 5 } }), ATTENTION_GROUPS.verifyFailed)
+  })
+
+  it('a working pane with a failed gate is the agent repairing its own work: working, not verifyFailed', () => {
+    const repairing = pane({ status: 'working', outputAt: NOW - 1 * SEC, checks: { gate: 'failed' } })
+    assert.equal(attentionGroup(repairing, ctx), ATTENTION_GROUPS.working)
+  })
+
+  it('a stale gate is not a failure: the verdict expired and needs re-running', () => {
+    assert.equal(attentionGroup(pane({ status: 'done', completionSeq: 5, checks: { gate: 'stale' } }), ctx), ATTENTION_GROUPS.unread)
+    assert.equal(attentionGroup(pane({ status: 'done', completionSeq: 5, checks: { gate: 'passed' } }), ctx), ATTENTION_GROUPS.unread)
+  })
+
+  it('a running gate is shown on any status, and a shell without checks is not an error', () => {
+    assert.equal(attentionGroup(pane({ status: 'blocked', checks: { gate: 'running' } }), ctx), ATTENTION_GROUPS.verifyRunning)
+    assert.equal(attentionGroup(pane({ status: 'idle' }), ctx), ATTENTION_GROUPS.idle)
+    assert.equal(attentionGroup(shell(), ctx), ATTENTION_GROUPS.shell)
   })
 
   it('a stalled working agent is group 2 only past the threshold, and `stallMs` moves it', () => {
-    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - STALL_MS }), ctx), 3)
-    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - STALL_MS - 1 }), ctx), 2)
-    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - 90 * SEC }), { ...ctx, stallMs: 60 * SEC }), 2)
-    assert.equal(attentionGroup(pane({ status: 'working', outputAt: null }), ctx), 3, 'unknown last output is not stalled')
+    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - STALL_MS }), ctx), 4)
+    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - STALL_MS - 1 }), ctx), 3)
+    assert.equal(attentionGroup(pane({ status: 'working', outputAt: NOW - 90 * SEC }), { ...ctx, stallMs: 60 * SEC }), 3)
+    assert.equal(attentionGroup(pane({ status: 'working', outputAt: null }), ctx), 4, 'unknown last output is not stalled')
   })
 
   it('judges stalled-ness by the `now` it is given, not by the host\'s `stalled` flag', () => {
     const quiet = pane({ status: 'working', outputAt: NOW - 100 * SEC, stalled: false })
-    assert.equal(attentionGroup(quiet, { ...ctx, now: NOW }), 3)
-    assert.equal(attentionGroup(quiet, { ...ctx, now: NOW + 100 * SEC }), 2, 'the clock moved on, the pane did not speak')
+    assert.equal(attentionGroup(quiet, { ...ctx, now: NOW }), 4)
+    assert.equal(attentionGroup(quiet, { ...ctx, now: NOW + 100 * SEC }), 3, 'the clock moved on, the pane did not speak')
   })
 
   it('a plain shell (agent null) is its own last rank, whatever its status, so it never outranks or mixes with agents', () => {
@@ -136,17 +162,17 @@ describe('attentionGroup', () => {
     const partial = { id: 'w1:p1', status: 'blocked' }
     assert.equal('agent' in partial, false)
     assert.equal(attentionGroup(partial, ctx), 0)
-    assert.equal(attentionGroup({ ...partial, agent: null }, ctx), 7, 'the same pane with agent: null is a shell')
+    assert.equal(attentionGroup({ ...partial, agent: null }, ctx), 9, 'the same pane with agent: null is a shell')
   })
 
   it('a status it does not recognise is "unknown" (rank 4), not "idle"', () => {
-    assert.equal(attentionGroup(pane({ status: 'thinking' }), ctx), 4)
-    assert.equal(attentionGroup(pane({ status: undefined }), ctx), 4)
+    assert.equal(attentionGroup(pane({ status: 'thinking' }), ctx), 6)
+    assert.equal(attentionGroup(pane({ status: undefined }), ctx), 6)
   })
 
   it('reads the clock only as a default: the same call with the same inputs always gives the same answer', () => {
     const p = pane({ status: 'working', outputAt: NOW - 200 * SEC })
-    assert.deepEqual([1, 2, 3].map(() => attentionGroup(p, ctx)), [2, 2, 2])
+    assert.deepEqual([1, 2, 3].map(() => attentionGroup(p, ctx)), [3, 3, 3])
   })
 })
 
@@ -156,19 +182,19 @@ describe('the busy fixture fleet', () => {
   it('is ranked by need at the fixture clock: blocked, unread completion, stalled, working, unknown, idle, shells', () => {
     const order = sortByAttention(panes, { now: NOW, seen: {} })
     assert.deepEqual(ids(order), ['w1:p1', 'w1:p2', 'w2:p1', 'w1:p3', 'w2:p2', 'w3:p3', 'w3:p2', 'w3:p1', 'w2:p3', 'w1:p4'])
-    assert.deepEqual(order.map((p) => attentionGroup(p, { now: NOW, seen: {} })), [0, 1, 2, 3, 3, 4, 6, 6, 7, 7])
+    assert.deepEqual(order.map((p) => attentionGroup(p, { now: NOW, seen: {} })), [0, 2, 3, 4, 4, 6, 8, 8, 9, 9])
   })
 
   it('a completion the user has read drops from rank 1 to rank 5, behind working and unknown agents', () => {
     const order = sortByAttention(panes, { now: NOW, seen: { 'w1:p2': 15 } })
     assert.deepEqual(ids(order), ['w1:p1', 'w2:p1', 'w1:p3', 'w2:p2', 'w3:p3', 'w1:p2', 'w3:p2', 'w3:p1', 'w2:p3', 'w1:p4'])
-    assert.equal(attentionGroup(panes.find((p) => p.id === 'w1:p2'), { now: NOW, seen: { 'w1:p2': 15 } }), 5)
+    assert.equal(attentionGroup(panes.find((p) => p.id === 'w1:p2'), { now: NOW, seen: { 'w1:p2': 15 } }), 7)
   })
 
   it('a newer completion is unread again even after an older one was read', () => {
     const codex = panes.find((p) => p.id === 'w1:p2')
-    assert.equal(attentionGroup(codex, { now: NOW, seen: { 'w1:p2': 14 } }), 1)
-    assert.equal(attentionGroup({ ...codex, completionSeq: 16 }, { now: NOW, seen: { 'w1:p2': 15 } }), 1)
+    assert.equal(attentionGroup(codex, { now: NOW, seen: { 'w1:p2': 14 } }), 2)
+    assert.equal(attentionGroup({ ...codex, completionSeq: 16 }, { now: NOW, seen: { 'w1:p2': 15 } }), 2)
   })
 
   it('shells sort after every agent even when they have been in their state longer than any agent', () => {
