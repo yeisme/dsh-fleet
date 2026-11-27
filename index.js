@@ -570,10 +570,26 @@ function view(thread) {
 /* ---------------------------------------------------------------------- apply */
 
 /**
- * Register the thread routes and the `/btw` entry point.
+ * Register every route of the bundle: the thread routes, `/btw`, and the Fleet routes.
+ *
+ * Wrapped rather than exported directly for one reason: a plugin that throws while applying is a plugin that fails to
+ * load, and everything it would have provided disappears with it. A half-registered bundle that logs what went wrong
+ * is always better than a missing one.
  * @param ctx - host root context.
  */
 export function apply(ctx) {
+  try {
+    applyInner(ctx)
+  } catch (error) {
+    ctx?.logger?.warn?.('threads: apply failed: %s', String(error?.message ?? error))
+  }
+}
+
+/**
+ * The real registration. Kept separate so `apply` can guard it as one unit.
+ * @param ctx - host root context.
+ */
+function applyInner(ctx) {
   context = ctx
 
   /**
@@ -807,24 +823,33 @@ export function apply(ctx) {
   }
 
   /* --- fleet (/plugin/fleet/*) --- */
-  const { socketPath } = discoverSocket()
-  const fleetClient = new HerdrClient({ socketPath })
-  const fleetState = new HerdrState(fleetClient, { session: process.env.HERDR_SESSION ?? null })
-  const fleetStore = new FleetStore({ file: join(homedir(), '.dsh', 'fleet', 'store.json') })
-  const fleetService = new FleetService({
-    client: fleetClient,
-    state: fleetState,
-    store: fleetStore,
-    log: (entry) => {
-      ctx.logger?.info?.('fleet: act %s pane=%s ok=%s reason=%s ms=%d', entry.verb ?? '-', entry.pane ?? '-', entry.ok, entry.reason ?? '-', entry.ms)
-    },
-  })
-  installFleetRoutes(ctx, { service: fleetService })
-  ctx.effect(() => {
-    void fleetService.start()
-    return () => {
-      fleetService.stop()
-      fleetClient.close()
-    }
-  }, 'fleet: service')
+
+  // The Fleet routes are additive, and this whole block is guarded for one reason: a machine without herdr (or with an
+  // unusable ~/.dsh) must still get a working plugin. The thread routes above do not need herdr at all, so a Fleet that
+  // cannot start is a degraded Fleet — not a bundle that fails to load.
+  try {
+    const socketPath = process.env.DSH_FLEET_HERDR_SOCKET ?? process.env.HERDR_SOCKET ?? discoverSocket().socketPath
+    const fleetClient = new HerdrClient({ socketPath })
+    const fleetState = new HerdrState(fleetClient, { session: process.env.HERDR_SESSION ?? null })
+    const fleetStore = new FleetStore({ file: join(homedir(), '.dsh', 'fleet', 'store.json') })
+    const fleetService = new FleetService({
+      client: fleetClient,
+      state: fleetState,
+      store: fleetStore,
+      log: (entry) => {
+        ctx.logger?.info?.('fleet: act %s pane=%s ok=%s reason=%s ms=%d', entry.verb ?? '-', entry.pane ?? '-', entry.ok, entry.reason ?? '-', entry.ms)
+      },
+    })
+    installFleetRoutes(ctx, { service: fleetService })
+    ctx.effect(() => {
+      void fleetService.start()
+      return () => {
+        fleetService.stop()
+        fleetClient.close()
+      }
+    }, 'fleet: service')
+  } catch (error) {
+    // Loud in the log, quiet for the user: the rest of the plugin keeps working and /plugin/fleet/* simply 404s.
+    ctx.logger?.warn?.('fleet: routes not registered: %s', String(error?.message ?? error))
+  }
 }
