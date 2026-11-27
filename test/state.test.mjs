@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { HerdrState, SUBSCRIPTIONS } from '../lib/herdr/state.js'
+import { HerdrState, SUBSCRIPTIONS } from '../lib/fleet/state.js'
 import { HerdrClient, HerdrError } from '../lib/herdr/protocol.js'
 import { EMPTY_SNAPSHOT, normalizeSnapshot, snapshotSignature } from '../lib/herdr/normalize.js'
 import { loadContract, validateDef } from '../lib/fleet/schema.js'
@@ -926,6 +926,42 @@ describe('HerdrState.stop', () => {
     state.stop()
     await assert.rejects(pending, (error) => error instanceof HerdrError)
     assert.ok(Date.now() - stoppedAt < 400, `the caller waited ${Date.now() - stoppedAt} ms after stop()`)
+  })
+
+  it('discards a snapshot that resolves after stop even when the client ignores abort', async () => {
+    const world = demoWorld()
+    const clock = createClock()
+    const reply = () => ({ type: 'session_snapshot', snapshot: world.snapshot() })
+    let response = Promise.resolve(reply())
+    let requestSignal
+    const state = new HerdrState({
+      request(method, _params, { signal }) {
+        assert.equal(method, 'session.snapshot')
+        requestSignal = signal
+        return response
+      },
+    }, { now: clock })
+    await state.refresh()
+    const { snapshot, revision, health, stale } = state
+    const events = []
+    state.on('change', (...args) => events.push(args))
+    state.on('status', (...args) => events.push(args))
+    let resolveLate
+    response = new Promise((resolve) => { resolveLate = resolve })
+    const pending = state.refresh()
+    state.stop()
+    assert.equal(requestSignal.aborted, true)
+    clock.advance(5000)
+    world.update('w1:p1', { status: 'done' })
+    resolveLate(reply())
+
+    await assert.rejects(pending, { code: 'state_stopped' })
+    assert.equal(state.snapshot, snapshot)
+    assert.equal(paneOf(state.snapshot, 'w1:p1').agentStatus, 'working')
+    assert.equal(state.revision, revision)
+    assert.deepEqual(state.health, health)
+    assert.equal(state.stale, stale)
+    assert.deepEqual(events, [])
   })
 
   it('a failure that arrives after stop() is not recorded either', async (t) => {
