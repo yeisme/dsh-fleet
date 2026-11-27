@@ -348,10 +348,40 @@ export function formatHandoffContext(pane, frames) {
   return joined.length > 8000 ? `${joined.slice(0, 7960)}\n…（已按 8k 字符上限截断）\n</外部会话上下文>` : joined
 }
 
+export function formatAgentHandoffMessage(pane, frames) {
+  const sourceName = pane.agent?.name
+    ? `@${pane.agent.name}`
+    : `@${pane.title || pane.id}`
+  const relevant = (frames ?? []).filter((f) => f.kind === 'final' || f.kind === 'text')
+  const latestFinal = [...relevant].reverse().find((f) => f.kind === 'final')
+  const latestText = [...relevant].reverse().find((f) => f.kind === 'text' && f.role !== 'user')
+    ?? [...relevant].reverse().find((f) => f.kind === 'text')
+  const rawSummary = latestFinal?.text || latestText?.text || pane.summary || '（暂无摘要）'
+  const summary = rawSummary.length > 1200 ? `${rawSummary.slice(0, 1200)}…` : rawSummary
+  const gate = pane.checks?.gate ?? 'none'
+  const lines = [
+    `<来自 ${sourceName} 的交接>`,
+    `来源：${pane.title || pane.id} (${pane.id})`,
+    `目录：${pane.cwd || '—'}`,
+    `门禁状态：${gate}`,
+    '',
+    '最新进展：',
+    summary,
+    '',
+    '请基于以上交接继续处理。',
+    `</来自 ${sourceName} 的交接>`,
+  ]
+  const joined = lines.join('\n')
+  return joined.length > 2000
+    ? `${joined.slice(0, 1950)}\n…（已截断）\n</来自 ${sourceName} 的交接>`
+    : joined
+}
+
 /* ------------------------------------------------------------------- Stage component */
 
 export function Stage({
   pane,
+  panes = [],
   now,
   seen,
   activeTab,
@@ -363,6 +393,7 @@ export function Stage({
   screenLoading,
   onRefreshScreen,
   onAct,
+  onHandoff,
   onHandoffContinue,
   inspectorOpen,
   onToggleInspector,
@@ -374,12 +405,31 @@ export function Stage({
   const [actionNotice, setActionNotice] = useState(null) // { kind: 'warn' | 'error' | 'info', text }
   const [pendingConfirm, setPendingConfirm] = useState(null) // 'restart' | 'close' | null
   const [copied, setCopied] = useState(false)
+  const [handoffOpen, setHandoffOpen] = useState(false)
+  const [handoffTargetId, setHandoffTargetId] = useState('')
+  const [handoffText, setHandoffText] = useState('')
+  const [handoffSending, setHandoffSending] = useState(false)
 
   useEffect(() => {
     setActionNotice(null)
     setPendingConfirm(null)
     setCopied(false)
+    setHandoffOpen(false)
+    setHandoffTargetId('')
+    setHandoffText('')
   }, [pane?.id])
+
+  const handoffTargets = useMemo(
+    () => (panes ?? []).filter((p) => p.id !== pane?.id && p.agent !== null && p.writable),
+    [panes, pane?.id],
+  )
+
+  useEffect(() => {
+    if (!handoffOpen) return
+    if (handoffTargetId && handoffTargets.some((p) => p.id === handoffTargetId)) return
+    const preferred = handoffTargets.find((p) => p.status !== 'blocked') ?? handoffTargets[0]
+    setHandoffTargetId(preferred?.id ?? '')
+  }, [handoffOpen, handoffTargets, handoffTargetId])
 
   if (!pane) {
     return (
@@ -466,6 +516,39 @@ export function Stage({
       setTimeout(() => setCopied(false), 1800)
     } catch {
       setActionNotice({ kind: 'info', text: '无法访问剪贴板，请手动复制上下文。' })
+    }
+  }
+
+  function handleToggleHandoff() {
+    if (handoffOpen) {
+      setHandoffOpen(false)
+      return
+    }
+    const preferred = handoffTargets.find((p) => p.status !== 'blocked') ?? handoffTargets[0]
+    setHandoffTargetId(preferred?.id ?? '')
+    setHandoffText(formatAgentHandoffMessage(pane, framesData?.frames ?? []))
+    setHandoffOpen(true)
+  }
+
+  async function handleSubmitHandoff(e) {
+    e?.preventDefault()
+    const text = handoffText.trim()
+    if (!text || !handoffTargetId || handoffSending) return
+    setHandoffSending(true)
+    try {
+      const res = typeof onHandoff === 'function'
+        ? await onHandoff(handoffTargetId, text)
+        : await onAct?.({ verb: 'prompt', pane: handoffTargetId, text })
+      if (res?.ok) {
+        setHandoffOpen(false)
+      } else if (res) {
+        setActionNotice({
+          kind: 'error',
+          text: res.message || `交接失败：${res.reason ?? 'unknown'}`,
+        })
+      }
+    } finally {
+      setHandoffSending(false)
     }
   }
 
@@ -856,9 +939,17 @@ export function Stage({
         {pane.agent && (
           <div className="dsh-fleet-handoff">
             <span style={{ fontSize: 11, color: 'var(--fleet-text-3)' }}>
-              接着问会带上最近 20 条消息（超 8k 截断），在新会话里继续
+              可一键转交给其他可写 Agent / Bot，或带上最近 20 条消息开新会话
             </span>
             <div className="dsh-fleet-handoff-actions">
+              <button
+                type="button"
+                className={`dsh-fleet-btn dsh-fleet-btn--sm ${handoffOpen ? 'dsh-fleet-btn--active' : ''}`}
+                onClick={handleToggleHandoff}
+                aria-expanded={handoffOpen}
+              >
+                转交给 Agent / Bot
+              </button>
               <button
                 type="button"
                 className="dsh-fleet-btn dsh-fleet-btn--sm"
@@ -876,6 +967,79 @@ export function Stage({
               </button>
             </div>
           </div>
+        )}
+
+        {pane.agent && handoffOpen && (
+          <form className="dsh-fleet-handoff-composer" onSubmit={handleSubmitHandoff}>
+            <div className="dsh-fleet-handoff-composer-head">
+              <label className="dsh-fleet-handoff-label">
+                <span>目标 Agent / Bot</span>
+                <select
+                  className="dsh-fleet-select"
+                  value={handoffTargetId}
+                  onChange={(e) => setHandoffTargetId(e.target.value)}
+                  disabled={handoffTargets.length === 0 || handoffSending}
+                  aria-label="选择交接目标 Agent 或 Bot"
+                >
+                  {handoffTargets.length === 0 ? (
+                    <option value="">暂无其他可写 Agent / Bot</option>
+                  ) : (
+                    handoffTargets.map((target) => {
+                      const tag = target.agent?.name ? `@${target.agent.name}` : (target.title || target.id)
+                      const suffix = target.id.startsWith('bot:') ? ' [Bot]' : ''
+                      const blockedSuffix = target.status === 'blocked' ? ' (等待审批)' : ''
+                      return (
+                        <option key={target.id} value={target.id}>
+                          {tag} · {target.agent?.kind ?? 'agent'}{suffix}{blockedSuffix}
+                        </option>
+                      )
+                    })
+                  )}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="dsh-fleet-btn dsh-fleet-btn--sm"
+                onClick={() => setHandoffOpen(false)}
+              >
+                收起
+              </button>
+            </div>
+            {handoffTargets.length === 0 ? (
+              <div className="dsh-fleet-readonly-notice">
+                <span>当前没有其他可写的 Agent / Bot。可在左侧切换安全锁为「全部可写」，或点击「+ 接入 Bot」。</span>
+              </div>
+            ) : (
+              <>
+                <textarea
+                  className="dsh-fleet-handoff-textarea"
+                  value={handoffText}
+                  onChange={(e) => setHandoffText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault()
+                      void handleSubmitHandoff()
+                    }
+                  }}
+                  rows={5}
+                  disabled={handoffSending}
+                  aria-label="交接消息内容"
+                />
+                <div className="dsh-fleet-handoff-composer-foot">
+                  <span style={{ fontSize: 11, color: 'var(--fleet-text-3)' }}>
+                    ⌘↵ 发送交接 · 长度 {handoffText.length} 字符
+                  </span>
+                  <button
+                    type="submit"
+                    className="dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm"
+                    disabled={handoffSending || !handoffTargetId || !handoffText.trim()}
+                  >
+                    {handoffSending ? '发送中…' : '发送交接'}
+                  </button>
+                </div>
+              </>
+            )}
+          </form>
         )}
       </footer>
     </main>

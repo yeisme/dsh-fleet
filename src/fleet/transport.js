@@ -7,6 +7,8 @@
  *    confirm === true guards).
  */
 
+import { POLICIES, writability } from '../../lib/fleet/writability.js'
+
 const BUILTIN_NOW = 1_800_000_000_000
 const NO_CHECKS = {
   gate: 'none',
@@ -494,6 +496,22 @@ export class LiveTransport {
     })
   }
 
+  async setPolicy(write) {
+    return await this._json(`${this.baseUrl}/policy`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ write }),
+    })
+  }
+
+  async registerBot(bot) {
+    return await this._json(`${this.baseUrl}/bots/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(bot),
+    })
+  }
+
   close() {
     this._listeners.clear()
     this._closeStream()
@@ -812,6 +830,144 @@ export class FixtureTransport {
     recomputeCountsAndWorkspaces(this._state)
     this._notify()
     return { ok: true, verb: request.verb, pane: pane.id, revision: pane.revision }
+  }
+
+  _recomputeWritability() {
+    const write = this._state.policy?.write ?? 'read-only'
+    const connected = Boolean(this._state.health?.connected)
+    const stale = Boolean(this._state.stale)
+    const dshPanes = new Set(
+      this._state.panes
+        .filter((p) => typeof p.agent?.name === 'string' && p.agent.name.startsWith('dsh-'))
+        .map((p) => p.id),
+    )
+    for (const pane of this._state.panes) {
+      const { writable, reason } = writability(
+        { id: pane.id, isAgent: pane.agent !== null },
+        { policy: write, dshPanes, connected, stale },
+      )
+      pane.writable = writable
+      pane.writableReason = reason
+    }
+  }
+
+  async setPolicy(write) {
+    if (typeof write !== 'string' || !POLICIES.includes(write)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-request',
+        message: '无效的写策略，仅支持 all / dsh-only / read-only',
+      }
+    }
+    this._state.policy = { write }
+    this._recomputeWritability()
+    this._state.now = this._now()
+    this._state.revision += 1
+    this._notify()
+    return { ok: true, policy: { write } }
+  }
+
+  async registerBot(bot) {
+    if (!isPlainObject(bot) || typeof bot.id !== 'string' || bot.id.trim() === '') {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-request',
+        message: 'Bot id 必须是非空字符串',
+      }
+    }
+    const trimmedId = bot.id.trim()
+    const rawId = trimmedId.startsWith('bot:') ? trimmedId.slice(4).trim() : trimmedId
+    if (!rawId) {
+      return {
+        ok: false,
+        status: 400,
+        reason: 'invalid-request',
+        message: 'Bot id 必须是非空字符串',
+      }
+    }
+    const paneId = `bot:${rawId}`.slice(0, 64)
+    const nowMs = this._now()
+    const kind = typeof bot.kind === 'string' && bot.kind.trim() ? bot.kind.trim() : 'bot'
+    const rawName = typeof bot.name === 'string' ? bot.name.trim() : ''
+    const agentName = AGENT_NAME_RE.test(rawName)
+      ? rawName
+      : (AGENT_NAME_RE.test(rawId) ? rawId : null)
+    const display = typeof bot.display === 'string' && bot.display.trim()
+      ? bot.display.trim()
+      : (rawName || `${kind} · ${rawId}`)
+    const title = typeof bot.title === 'string' && bot.title.trim()
+      ? bot.title.trim()
+      : (rawName || rawId)
+    const summary = typeof bot.summary === 'string' ? bot.summary.trim().slice(0, 240) : ''
+    const status = ['working', 'blocked', 'done', 'idle', 'unknown'].includes(bot.status)
+      ? bot.status
+      : 'idle'
+
+    const pane = {
+      id: paneId,
+      workspaceId: 'bots',
+      tabId: paneId,
+      workspaceLabel: 'Agent Bots',
+      tabLabel: kind,
+      title,
+      cwd: typeof bot.cwd === 'string' && bot.cwd.trim() ? bot.cwd.trim() : '~',
+      focused: false,
+      agent: {
+        kind,
+        name: agentName,
+        display,
+        session: null,
+        interactiveReady: true,
+      },
+      status,
+      stalled: false,
+      completionSeq: 0,
+      stateChangeSeq: 1,
+      stateSince: nowMs,
+      outputAt: nowMs,
+      revision: 1,
+      summary,
+      summarySource: summary ? 'transcript' : 'none',
+      writable: true,
+      writableReason: null,
+      checks: { ...NO_CHECKS, steps: [] },
+    }
+
+    const existingIdx = this._state.panes.findIndex((p) => p.id === paneId)
+    if (existingIdx >= 0) {
+      pane.revision = (this._state.panes[existingIdx].revision ?? 0) + 1
+      this._state.panes[existingIdx] = pane
+    } else {
+      this._state.panes.push(pane)
+    }
+
+    if (!this._frames[paneId]) {
+      this._frames[paneId] = {
+        ok: true,
+        paneId,
+        source: 'transcript',
+        reason: null,
+        agentKind: kind,
+        sessionId: paneId,
+        frames: summary
+          ? [{ kind: 'text', id: `bot-init-${this._seq++}`, role: 'assistant', text: summary, at: nowMs }]
+          : [],
+        hasEarlier: false,
+        partial: false,
+        reset: false,
+        unknownFrames: 0,
+        cursor: { start: 'o:0', end: `o:${this._seq}` },
+      }
+    }
+
+    this._recomputeWritability()
+    recomputeCountsAndWorkspaces(this._state)
+    this._state.now = nowMs
+    this._state.revision += 1
+    this._notify()
+    return { ok: true, pane: structuredClone(pane) }
   }
 
   close() {

@@ -10,10 +10,165 @@ import {
   sortByAttention,
 } from '../../lib/fleet/attention.js'
 import { Inspector } from './inspector.jsx'
-import { Roster } from './roster.jsx'
+import { POLICY_OPTIONS, Roster } from './roster.jsx'
 import { Stage, formatHandoffContext } from './stage.jsx'
 import { ensureFleetStyles } from './styles.js'
 import { FixtureTransport, LiveTransport, SCENARIO_NAMES } from './transport.js'
+
+const POLICY_LABEL_MAP = Object.fromEntries(POLICY_OPTIONS.map((o) => [o.value, o.label]))
+
+function buildBotCurlSnippet(baseUrl) {
+  const origin = globalThis.location?.origin || 'http://127.0.0.1:4310'
+  const root = `${origin}${baseUrl || '/plugin/fleet'}`
+  return [
+    '# 1) 注册外部 Agent Bot',
+    `curl -X POST ${root}/bots/register \\`,
+    '  -H \'content-type: application/json\' \\',
+    '  -d \'{"id":"my-bot","name":"my-bot","kind":"webhook","summary":"就绪，等待任务"}\'',
+    '',
+    '# 2) 发送心跳更新状态',
+    `curl -X POST ${root}/bots/heartbeat \\`,
+    '  -H \'content-type: application/json\' \\',
+    '  -d \'{"id":"my-bot","status":"working","summary":"正在处理任务"}\'',
+  ].join('\n')
+}
+
+function BotConnectDrawer({ baseUrl, onClose, onRegister }) {
+  const [botId, setBotId] = useState('')
+  const [botName, setBotName] = useState('')
+  const [botKind, setBotKind] = useState('webhook')
+  const [botSummary, setBotSummary] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [copiedCurl, setCopiedCurl] = useState(false)
+  const [formError, setFormError] = useState(null)
+
+  const curlSnippet = useMemo(() => buildBotCurlSnippet(baseUrl), [baseUrl])
+
+  async function handleCopySnippet() {
+    try {
+      await globalThis.navigator?.clipboard?.writeText(curlSnippet)
+      setCopiedCurl(true)
+      setTimeout(() => setCopiedCurl(false), 1800)
+    } catch {
+      setFormError('无法访问剪贴板，请手动复制下方 curl 命令。')
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    const cleanId = botId.trim()
+    if (!cleanId || submitting) {
+      setFormError('请输入 Bot ID（例如 review-bot）')
+      return
+    }
+    setFormError(null)
+    setSubmitting(true)
+    try {
+      const res = await onRegister({
+        id: cleanId,
+        name: botName.trim() || cleanId,
+        kind: botKind.trim() || 'webhook',
+        summary: botSummary.trim(),
+      })
+      if (res?.ok) {
+        setBotId('')
+        setBotName('')
+        setBotSummary('')
+        onClose()
+      } else {
+        setFormError(res?.message || `接入失败：${res?.reason ?? 'unknown'}`)
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section className="dsh-fleet-bot-drawer" aria-label="接入外部 Agent Bot">
+      <div className="dsh-fleet-bot-drawer-head">
+        <strong>接入外部 Agent Bot</strong>
+        <button type="button" className="dsh-fleet-btn dsh-fleet-btn--sm" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+      <div className="dsh-fleet-bot-drawer-grid">
+        <div className="dsh-fleet-bot-snippet">
+          <div className="dsh-fleet-bot-snippet-head">
+            <span>HTTP 注册与心跳示例（curl）</span>
+            <button type="button" className="dsh-fleet-btn dsh-fleet-btn--sm" onClick={handleCopySnippet}>
+              {copiedCurl ? '已复制 ✓' : '复制 curl'}
+            </button>
+          </div>
+          <pre className="dsh-fleet-bot-pre">{curlSnippet}</pre>
+        </div>
+
+        <form className="dsh-fleet-bot-form" onSubmit={handleSubmit}>
+          <div className="dsh-fleet-bot-form-row">
+            <label className="dsh-fleet-field">
+              <span>Bot ID *</span>
+              <input
+                type="text"
+                className="dsh-fleet-input"
+                value={botId}
+                onChange={(e) => setBotId(e.target.value)}
+                placeholder="例如 ops-bot"
+                disabled={submitting}
+              />
+            </label>
+            <label className="dsh-fleet-field">
+              <span>名称</span>
+              <input
+                type="text"
+                className="dsh-fleet-input"
+                value={botName}
+                onChange={(e) => setBotName(e.target.value)}
+                placeholder="例如 ops-helper"
+                disabled={submitting}
+              />
+            </label>
+            <label className="dsh-fleet-field">
+              <span>类型 (kind)</span>
+              <input
+                type="text"
+                className="dsh-fleet-input"
+                value={botKind}
+                onChange={(e) => setBotKind(e.target.value)}
+                placeholder="webhook / daemon / im"
+                disabled={submitting}
+              />
+            </label>
+          </div>
+          <label className="dsh-fleet-field">
+            <span>初始摘要 (summary)</span>
+            <input
+              type="text"
+              className="dsh-fleet-input"
+              value={botSummary}
+              onChange={(e) => setBotSummary(e.target.value)}
+              placeholder="例如：监听部署告警并等待指令"
+              disabled={submitting}
+            />
+          </label>
+          {formError && (
+            <div className="dsh-fleet-bot-error" role="alert">{formError}</div>
+          )}
+          <div className="dsh-fleet-bot-form-foot">
+            <span style={{ fontSize: 11, color: 'var(--fleet-text-3)' }}>
+              提交后立即注册为 bot:&lt;id&gt; 面板并出现在名册中
+            </span>
+            <button
+              type="submit"
+              className="dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm"
+              disabled={submitting || !botId.trim()}
+            >
+              {submitting ? '接入中…' : '立即接入测试'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+  )
+}
 
 const SEEN_STORAGE_KEY = 'dsh-fleet:seen:v1'
 
@@ -64,9 +219,28 @@ export function FleetView({
   const [framesLoading, setFramesLoading] = useState(false)
   const [screenData, setScreenData] = useState(null)
   const [screenLoading, setScreenLoading] = useState(false)
+  const [policyUpdating, setPolicyUpdating] = useState(false)
+  const [botDrawerOpen, setBotDrawerOpen] = useState(false)
+  const [toast, setToast] = useState(null) // { kind: 'success' | 'error' | 'info', text, targetPaneId?, targetLabel? }
 
   const searchInputRef = useRef(null)
   const lastFetchedRef = useRef({ paneId: null, revision: null, cursorEnd: null })
+  const toastTimerRef = useRef(null)
+
+  const showToast = useCallback((nextToast, durationMs = 5000) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast(nextToast)
+    if (durationMs > 0) {
+      toastTimerRef.current = setTimeout(() => {
+        setToast(null)
+        toastTimerRef.current = null
+      }, durationMs)
+    }
+  }, [])
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+  }, [])
 
   useEffect(() => {
     ensureFleetStyles()
@@ -267,6 +441,71 @@ export function FleetView({
 
   const handleAct = useCallback((req) => transport.act(req), [transport])
 
+  const handleSetPolicy = useCallback(async (nextPolicy) => {
+    if (typeof transport.setPolicy !== 'function') return
+    setPolicyUpdating(true)
+    try {
+      const res = await transport.setPolicy(nextPolicy)
+      if (res?.ok) {
+        const label = POLICY_LABEL_MAP[nextPolicy] ?? nextPolicy
+        showToast({ kind: 'success', text: `安全锁已切换为：${label}` })
+      } else {
+        showToast({
+          kind: 'error',
+          text: res?.message || `切换写策略失败：${res?.reason ?? 'unknown'}`,
+        })
+      }
+      return res
+    } finally {
+      setPolicyUpdating(false)
+    }
+  }, [transport, showToast])
+
+  const handleAgentHandoff = useCallback(async (targetPaneId, text) => {
+    const targetPane = (state?.panes ?? []).find((p) => p.id === targetPaneId)
+    const targetLabel = targetPane?.agent?.name
+      ? `@${targetPane.agent.name}`
+      : (targetPane?.title || targetPaneId)
+    const res = await transport.act({ verb: 'prompt', pane: targetPaneId, text })
+    if (res?.ok) {
+      showToast({
+        kind: 'success',
+        text: `已将交接上下文发送给 ${targetLabel}`,
+        targetPaneId,
+        targetLabel,
+      }, 7000)
+    } else {
+      showToast({
+        kind: 'error',
+        text: res?.message || `交接发送失败：${res?.reason ?? 'unknown'}`,
+      })
+    }
+    return res
+  }, [transport, state?.panes, showToast])
+
+  const handleRegisterBot = useCallback(async (bot) => {
+    if (typeof transport.registerBot !== 'function') {
+      return { ok: false, reason: 'unsupported', message: '当前传输层不支持注册外部 Bot' }
+    }
+    const res = await transport.registerBot(bot)
+    if (res?.ok) {
+      const paneId = res.pane?.id || res.bot?.id || `bot:${bot.id}`
+      setSelectedId(paneId)
+      showToast({
+        kind: 'success',
+        text: `已接入外部 Bot：${paneId}`,
+        targetPaneId: paneId,
+        targetLabel: paneId,
+      })
+    } else {
+      showToast({
+        kind: 'error',
+        text: res?.message || `接入 Bot 失败：${res?.reason ?? 'unknown'}`,
+      })
+    }
+    return res
+  }, [transport, showToast])
+
   const handleHandoff = useCallback((pane, frames) => {
     const contextText = formatHandoffContext(pane, frames)
     if (typeof onHandoffContinue === 'function') {
@@ -364,6 +603,43 @@ export function FleetView({
         </div>
       )}
 
+      {/* Toast Feedback */}
+      {toast && (
+        <div className={`dsh-fleet-toast dsh-fleet-toast--${toast.kind}`} role="status">
+          <span>{toast.text}</span>
+          <div className="dsh-fleet-toast-actions">
+            {toast.targetPaneId && (
+              <button
+                type="button"
+                className="dsh-fleet-btn dsh-fleet-btn--sm dsh-fleet-btn--primary"
+                onClick={() => {
+                  setSelectedId(toast.targetPaneId)
+                  setToast(null)
+                }}
+              >
+                跳到 {toast.targetLabel || toast.targetPaneId}
+              </button>
+            )}
+            <button
+              type="button"
+              className="dsh-fleet-btn dsh-fleet-btn--sm"
+              onClick={() => setToast(null)}
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Inline External Bot Connect Drawer */}
+      {botDrawerOpen && (
+        <BotConnectDrawer
+          baseUrl={transport.baseUrl}
+          onClose={() => setBotDrawerOpen(false)}
+          onRegister={handleRegisterBot}
+        />
+      )}
+
       {/* Offline (never connected) empty state */}
       {isOfflineNeverConnected ? (
         <div className="dsh-fleet-empty">
@@ -376,7 +652,10 @@ export function FleetView({
       ) : isEmpty ? (
         <div className="dsh-fleet-empty">
           <strong>还没有运行中的 Agent Bot</strong>
-          <span>herdr 已连接，当前仅有 {counts?.shells ?? 0} 个普通终端面板。启动任意 Agent 后会自动出现在这里。</span>
+          <span>herdr 已连接，当前仅有 {counts?.shells ?? 0} 个普通终端面板。启动任意 Agent 或接入外部 Bot 后会自动出现在这里。</span>
+          <button type="button" className="dsh-fleet-btn dsh-fleet-btn--primary" onClick={() => setBotDrawerOpen(true)}>
+            + 接入外部 Agent Bot
+          </button>
         </div>
       ) : (
         <div className={`dsh-fleet-body ${inspectorOpen && selectedPane ? '' : 'dsh-fleet-body--no-inspector'}`}>
@@ -387,9 +666,13 @@ export function FleetView({
             selectedId={selectedId}
             onSelect={setSelectedId}
             searchInputRef={searchInputRef}
+            onSetPolicy={handleSetPolicy}
+            policyUpdating={policyUpdating}
+            onOpenBotDrawer={() => setBotDrawerOpen((v) => !v)}
           />
           <Stage
             pane={selectedPane}
+            panes={state?.panes ?? []}
             now={now}
             seen={seen}
             activeTab={activeTab}
@@ -401,6 +684,7 @@ export function FleetView({
             screenLoading={screenLoading}
             onRefreshScreen={refreshScreen}
             onAct={handleAct}
+            onHandoff={handleAgentHandoff}
             onHandoffContinue={handleHandoff}
             inspectorOpen={inspectorOpen}
             onToggleInspector={() => setInspectorOpen((v) => !v)}

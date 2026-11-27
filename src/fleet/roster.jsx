@@ -12,10 +12,20 @@ import {
   sortByAttention,
 } from '../../lib/fleet/attention.js'
 
-const POLICY_LABELS = {
-  all: '写权限：全部',
-  'dsh-only': '写权限：仅 DSH',
-  'read-only': '只读策略',
+export const POLICY_OPTIONS = [
+  { value: 'all', label: '全部可写' },
+  { value: 'dsh-only', label: '仅 DSH 创建' },
+  { value: 'read-only', label: '只读锁定' },
+]
+
+const SOURCE_FILTERS = [
+  { key: 'all', label: '全部' },
+  { key: 'herdr', label: 'Herdr' },
+  { key: 'bots', label: 'Bots' },
+]
+
+export function isBotPane(pane) {
+  return Boolean(pane && (pane.id?.startsWith('bot:') || pane.workspaceId === 'bots'))
 }
 
 const GATE_LABELS = {
@@ -75,6 +85,9 @@ function PaneRow({ pane, selected, now, seen, onSelect }) {
         {pane.agent && (
           <span className="dsh-fleet-pill">{pane.agent.kind}</span>
         )}
+        {isBotPane(pane) && (
+          <span className="dsh-fleet-pill dsh-fleet-pill--bot">Bot</span>
+        )}
         {pane.agent?.name && (
           <span>@{pane.agent.name}</span>
         )}
@@ -102,9 +115,13 @@ export function Roster({
   selectedId,
   onSelect,
   searchInputRef,
+  onSetPolicy,
+  policyUpdating = false,
+  onOpenBotDrawer,
 }) {
   const [search, setSearch] = useState('')
   const [workspaceId, setWorkspaceId] = useState('all')
+  const [sourceFilter, setSourceFilter] = useState('all')
   const [onlyNeedsMe, setOnlyNeedsMe] = useState(false)
   const [idleExpanded, setIdleExpanded] = useState(false)
   const [shellsExpanded, setShellsExpanded] = useState(false)
@@ -113,9 +130,22 @@ export function Roster({
   const workspaces = state?.workspaces ?? []
   const policyWrite = state?.policy?.write ?? 'read-only'
 
+  const sourceCounts = useMemo(() => {
+    let herdr = 0
+    let bots = 0
+    for (const pane of panes) {
+      if (pane.agent === null) continue
+      if (isBotPane(pane)) bots += 1
+      else herdr += 1
+    }
+    return { all: herdr + bots, herdr, bots }
+  }, [panes])
+
   const { groups, shells } = useMemo(() => {
     const query = search.trim().toLowerCase()
     const filtered = panes.filter((pane) => {
+      if (sourceFilter === 'bots' && !isBotPane(pane)) return false
+      if (sourceFilter === 'herdr' && isBotPane(pane)) return false
       if (workspaceId !== 'all' && pane.workspaceId !== workspaceId) return false
       if (query) {
         const hay = [
@@ -170,7 +200,7 @@ export function Roster({
       ],
       shells: bucket.shells,
     }
-  }, [panes, workspaceId, search, onlyNeedsMe, now, seen])
+  }, [panes, sourceFilter, workspaceId, search, onlyNeedsMe, now, seen])
 
   const selectedInIdle = groups.find((g) => g.key === 'idle')?.items.some((p) => p.id === selectedId) ?? false
   const showIdle = idleExpanded || selectedInIdle || search.trim().length > 0
@@ -178,15 +208,51 @@ export function Roster({
   return (
     <aside className="dsh-fleet-roster" aria-label="Agent 名册">
       <div className="dsh-fleet-roster-controls">
-        <input
-          ref={searchInputRef}
-          type="search"
-          className="dsh-fleet-search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜索 agent / 目录 / 标题… ( / )"
-          aria-label="搜索 agent"
-        />
+        <div className="dsh-fleet-roster-head">
+          <input
+            ref={searchInputRef}
+            type="search"
+            className="dsh-fleet-search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索 agent / 目录 / 标题… ( / )"
+            aria-label="搜索 agent"
+          />
+          {typeof onOpenBotDrawer === 'function' && (
+            <button
+              type="button"
+              className="dsh-fleet-btn dsh-fleet-btn--sm"
+              onClick={onOpenBotDrawer}
+              title="接入外部个人 Agent Bot"
+            >
+              + 接入 Bot
+            </button>
+          )}
+        </div>
+        <div className="dsh-fleet-filter-row">
+          <div className="dsh-fleet-source-pills" role="group" aria-label="按来源筛选">
+            {SOURCE_FILTERS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={`dsh-fleet-source-pill ${sourceFilter === opt.key ? 'dsh-fleet-source-pill--active' : ''}`}
+                onClick={() => setSourceFilter(opt.key)}
+                aria-pressed={sourceFilter === opt.key}
+              >
+                <span>{opt.label}</span>
+                <span className="dsh-fleet-num">{sourceCounts[opt.key]}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className={`dsh-fleet-btn dsh-fleet-btn--sm ${onlyNeedsMe ? 'dsh-fleet-btn--active' : ''}`}
+            onClick={() => setOnlyNeedsMe((v) => !v)}
+            aria-pressed={onlyNeedsMe}
+          >
+            仅看需要我
+          </button>
+        </div>
         <div className="dsh-fleet-filter-row">
           <select
             className="dsh-fleet-select"
@@ -201,22 +267,26 @@ export function Roster({
               </option>
             ))}
           </select>
-          <button
-            type="button"
-            className={`dsh-fleet-btn dsh-fleet-btn--sm ${onlyNeedsMe ? 'dsh-fleet-btn--active' : ''}`}
-            onClick={() => setOnlyNeedsMe((v) => !v)}
-            aria-pressed={onlyNeedsMe}
-          >
-            仅看需要我
-          </button>
-        </div>
-        <div className="dsh-fleet-filter-row">
-          <span className="dsh-fleet-pill" title={`policy.write = ${policyWrite}`}>
-            {POLICY_LABELS[policyWrite] ?? policyWrite}
-          </span>
           <span className="dsh-fleet-row-time dsh-fleet-num">
             {state?.counts?.agents ?? 0} bots
           </span>
+        </div>
+        <div className="dsh-fleet-policy-row">
+          <span className="dsh-fleet-policy-label" title={`policy.write = ${policyWrite}`}>
+            {policyWrite === 'read-only' ? '🔒' : '🔓'} 安全锁
+          </span>
+          <select
+            className={`dsh-fleet-select dsh-fleet-policy-select dsh-fleet-policy-select--${policyWrite}`}
+            value={policyWrite}
+            disabled={policyUpdating || typeof onSetPolicy !== 'function'}
+            onChange={(e) => onSetPolicy?.(e.target.value)}
+            aria-label="写权限安全锁"
+            title={`当前策略：${policyWrite}`}
+          >
+            {POLICY_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
       </div>
 

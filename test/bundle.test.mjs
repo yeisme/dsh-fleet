@@ -30,7 +30,7 @@ function fakeCtx({ registerThrows = null, registered = [] } = {}) {
     connection: { requestRejection: () => undefined },
     webServer: {
       register: (entry) => {
-        if (registerThrows !== null) throw new Error(registerThrows)
+        if (registerThrows !== null && entry.path.startsWith('/plugin/fleet/')) throw new Error(registerThrows)
         registered.push(entry.path)
         return () => {}
       },

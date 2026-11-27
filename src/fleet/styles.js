@@ -962,11 +962,292 @@ export const FLEET_CSS = `
   flex: 1 1 auto;
 }
 
+/* Source filter pills, policy lock selector & bot badge */
+.dsh-fleet-roster-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dsh-fleet-roster-head .dsh-fleet-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dsh-fleet-source-pills {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 7px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  gap: 2px;
+}
+
+.dsh-fleet-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--fleet-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+
+.dsh-fleet-source-pill:hover {
+  color: var(--fleet-text);
+  background: var(--fleet-bg-subtle);
+}
+
+.dsh-fleet-source-pill--active {
+  background: color-mix(in srgb, var(--fleet-accent) 18%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-pill--bot {
+  color: var(--fleet-accent);
+  border-color: color-mix(in srgb, var(--fleet-accent) 42%, transparent);
+}
+
+.dsh-fleet-policy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.dsh-fleet-policy-label {
+  font-size: 11px;
+  color: var(--fleet-text-2);
+  white-space: nowrap;
+}
+
+.dsh-fleet-policy-select {
+  flex: 1 1 auto;
+  max-width: 148px;
+}
+
+.dsh-fleet-policy-select--read-only {
+  border-color: color-mix(in srgb, var(--fleet-c-blocked) 50%, transparent);
+  color: var(--fleet-c-blocked);
+}
+
+.dsh-fleet-policy-select--dsh-only {
+  border-color: color-mix(in srgb, var(--fleet-accent) 45%, transparent);
+}
+
+.dsh-fleet-policy-select--all {
+  border-color: color-mix(in srgb, var(--fleet-c-success) 45%, transparent);
+}
+
+/* Inline Handoff Composer */
+.dsh-fleet-handoff-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+}
+
+.dsh-fleet-handoff-composer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dsh-fleet-handoff-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-handoff-textarea {
+  width: 100%;
+  min-height: 84px;
+  max-height: 180px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text);
+  font-family: var(--fleet-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+.dsh-fleet-handoff-textarea:focus {
+  border-color: var(--fleet-accent);
+}
+
+.dsh-fleet-handoff-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Toast bar */
+.dsh-fleet-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-toast--success {
+  background: color-mix(in srgb, var(--fleet-c-success) 10%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-toast--error {
+  background: color-mix(in srgb, var(--fleet-c-error) 12%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-toast--info {
+  background: color-mix(in srgb, var(--fleet-accent) 10%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Inline External Bot Connect Drawer */
+.dsh-fleet-bot-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-bot-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.dsh-fleet-bot-drawer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .dsh-fleet-bot-drawer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.dsh-fleet-bot-snippet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dsh-fleet-bot-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-bot-pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text-2);
+  font-family: var(--fleet-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.dsh-fleet-bot-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-fleet-bot-form-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dsh-fleet-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-input {
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.dsh-fleet-input:focus {
+  border-color: var(--fleet-accent);
+}
+
+.dsh-fleet-bot-error {
+  font-size: 11px;
+  color: var(--fleet-c-error);
+}
+
+.dsh-fleet-bot-form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dsh-fleet-dot--working {
     animation: none;
   }
-  .dsh-fleet-btn, .dsh-fleet-row {
+  .dsh-fleet-btn, .dsh-fleet-row, .dsh-fleet-source-pill {
     transition: none;
   }
 }

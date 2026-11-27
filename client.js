@@ -2816,11 +2816,19 @@ function Inspector({ pane, now, onAct, onClose }) {
 // src/fleet/roster.jsx
 var import_react2 = require("react");
 var jsx_runtime2 = require("react/jsx-runtime");
-var POLICY_LABELS = {
-  all: "写权限：全部",
-  "dsh-only": "写权限：仅 DSH",
-  "read-only": "只读策略"
-};
+var POLICY_OPTIONS = [
+  { value: "all", label: "全部可写" },
+  { value: "dsh-only", label: "仅 DSH 创建" },
+  { value: "read-only", label: "只读锁定" }
+];
+var SOURCE_FILTERS = [
+  { key: "all", label: "全部" },
+  { key: "herdr", label: "Herdr" },
+  { key: "bots", label: "Bots" }
+];
+function isBotPane(pane) {
+  return Boolean(pane && (pane.id?.startsWith("bot:") || pane.workspaceId === "bots"));
+}
 var GATE_LABELS2 = {
   running: "门禁运行中",
   passed: "门禁通过",
@@ -2897,6 +2905,10 @@ function PaneRow({ pane, selected, now, seen, onSelect }) {
             className: "dsh-fleet-pill",
             children: pane.agent.kind
           }),
+          isBotPane(pane) && /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            className: "dsh-fleet-pill dsh-fleet-pill--bot",
+            children: "Bot"
+          }),
           pane.agent?.name && /* @__PURE__ */ jsx_runtime2.jsxs("span", {
             children: [
               "@",
@@ -2930,19 +2942,40 @@ function Roster({
   seen,
   selectedId,
   onSelect,
-  searchInputRef
+  searchInputRef,
+  onSetPolicy,
+  policyUpdating = false,
+  onOpenBotDrawer
 }) {
   const [search, setSearch] = import_react2.useState("");
   const [workspaceId, setWorkspaceId] = import_react2.useState("all");
+  const [sourceFilter, setSourceFilter] = import_react2.useState("all");
   const [onlyNeedsMe, setOnlyNeedsMe] = import_react2.useState(false);
   const [idleExpanded, setIdleExpanded] = import_react2.useState(false);
   const [shellsExpanded, setShellsExpanded] = import_react2.useState(false);
   const panes = state?.panes ?? [];
   const workspaces = state?.workspaces ?? [];
   const policyWrite = state?.policy?.write ?? "read-only";
+  const sourceCounts = import_react2.useMemo(() => {
+    let herdr = 0;
+    let bots = 0;
+    for (const pane of panes) {
+      if (pane.agent === null)
+        continue;
+      if (isBotPane(pane))
+        bots += 1;
+      else
+        herdr += 1;
+    }
+    return { all: herdr + bots, herdr, bots };
+  }, [panes]);
   const { groups, shells } = import_react2.useMemo(() => {
     const query = search.trim().toLowerCase();
     const filtered = panes.filter((pane) => {
+      if (sourceFilter === "bots" && !isBotPane(pane))
+        return false;
+      if (sourceFilter === "herdr" && isBotPane(pane))
+        return false;
       if (workspaceId !== "all" && pane.workspaceId !== workspaceId)
         return false;
       if (query) {
@@ -3003,7 +3036,7 @@ function Roster({
       ],
       shells: bucket.shells
     };
-  }, [panes, workspaceId, search, onlyNeedsMe, now, seen]);
+  }, [panes, sourceFilter, workspaceId, search, onlyNeedsMe, now, seen]);
   const selectedInIdle = groups.find((g) => g.key === "idle")?.items.some((p) => p.id === selectedId) ?? false;
   const showIdle = idleExpanded || selectedInIdle || search.trim().length > 0;
   return /* @__PURE__ */ jsx_runtime2.jsxs("aside", {
@@ -3013,14 +3046,58 @@ function Roster({
       /* @__PURE__ */ jsx_runtime2.jsxs("div", {
         className: "dsh-fleet-roster-controls",
         children: [
-          /* @__PURE__ */ jsx_runtime2.jsx("input", {
-            ref: searchInputRef,
-            type: "search",
-            className: "dsh-fleet-search",
-            value: search,
-            onChange: (e) => setSearch(e.target.value),
-            placeholder: "搜索 agent / 目录 / 标题… ( / )",
-            "aria-label": "搜索 agent"
+          /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+            className: "dsh-fleet-roster-head",
+            children: [
+              /* @__PURE__ */ jsx_runtime2.jsx("input", {
+                ref: searchInputRef,
+                type: "search",
+                className: "dsh-fleet-search",
+                value: search,
+                onChange: (e) => setSearch(e.target.value),
+                placeholder: "搜索 agent / 目录 / 标题… ( / )",
+                "aria-label": "搜索 agent"
+              }),
+              typeof onOpenBotDrawer === "function" && /* @__PURE__ */ jsx_runtime2.jsx("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                onClick: onOpenBotDrawer,
+                title: "接入外部个人 Agent Bot",
+                children: "+ 接入 Bot"
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+            className: "dsh-fleet-filter-row",
+            children: [
+              /* @__PURE__ */ jsx_runtime2.jsx("div", {
+                className: "dsh-fleet-source-pills",
+                role: "group",
+                "aria-label": "按来源筛选",
+                children: SOURCE_FILTERS.map((opt) => /* @__PURE__ */ jsx_runtime2.jsxs("button", {
+                  type: "button",
+                  className: `dsh-fleet-source-pill ${sourceFilter === opt.key ? "dsh-fleet-source-pill--active" : ""}`,
+                  onClick: () => setSourceFilter(opt.key),
+                  "aria-pressed": sourceFilter === opt.key,
+                  children: [
+                    /* @__PURE__ */ jsx_runtime2.jsx("span", {
+                      children: opt.label
+                    }),
+                    /* @__PURE__ */ jsx_runtime2.jsx("span", {
+                      className: "dsh-fleet-num",
+                      children: sourceCounts[opt.key]
+                    })
+                  ]
+                }, opt.key))
+              }),
+              /* @__PURE__ */ jsx_runtime2.jsx("button", {
+                type: "button",
+                className: `dsh-fleet-btn dsh-fleet-btn--sm ${onlyNeedsMe ? "dsh-fleet-btn--active" : ""}`,
+                onClick: () => setOnlyNeedsMe((v) => !v),
+                "aria-pressed": onlyNeedsMe,
+                children: "仅看需要我"
+              })
+            ]
           }),
           /* @__PURE__ */ jsx_runtime2.jsxs("div", {
             className: "dsh-fleet-filter-row",
@@ -3050,29 +3127,37 @@ function Roster({
                   }, ws.id))
                 ]
               }),
-              /* @__PURE__ */ jsx_runtime2.jsx("button", {
-                type: "button",
-                className: `dsh-fleet-btn dsh-fleet-btn--sm ${onlyNeedsMe ? "dsh-fleet-btn--active" : ""}`,
-                onClick: () => setOnlyNeedsMe((v) => !v),
-                "aria-pressed": onlyNeedsMe,
-                children: "仅看需要我"
-              })
-            ]
-          }),
-          /* @__PURE__ */ jsx_runtime2.jsxs("div", {
-            className: "dsh-fleet-filter-row",
-            children: [
-              /* @__PURE__ */ jsx_runtime2.jsx("span", {
-                className: "dsh-fleet-pill",
-                title: `policy.write = ${policyWrite}`,
-                children: POLICY_LABELS[policyWrite] ?? policyWrite
-              }),
               /* @__PURE__ */ jsx_runtime2.jsxs("span", {
                 className: "dsh-fleet-row-time dsh-fleet-num",
                 children: [
                   state?.counts?.agents ?? 0,
                   " bots"
                 ]
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+            className: "dsh-fleet-policy-row",
+            children: [
+              /* @__PURE__ */ jsx_runtime2.jsxs("span", {
+                className: "dsh-fleet-policy-label",
+                title: `policy.write = ${policyWrite}`,
+                children: [
+                  policyWrite === "read-only" ? "\uD83D\uDD12" : "\uD83D\uDD13",
+                  " 安全锁"
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime2.jsx("select", {
+                className: `dsh-fleet-select dsh-fleet-policy-select dsh-fleet-policy-select--${policyWrite}`,
+                value: policyWrite,
+                disabled: policyUpdating || typeof onSetPolicy !== "function",
+                onChange: (e) => onSetPolicy?.(e.target.value),
+                "aria-label": "写权限安全锁",
+                title: `当前策略：${policyWrite}`,
+                children: POLICY_OPTIONS.map((opt) => /* @__PURE__ */ jsx_runtime2.jsx("option", {
+                  value: opt.value,
+                  children: opt.label
+                }, opt.value))
               })
             ]
           })
@@ -3780,8 +3865,35 @@ function formatHandoffContext(pane, frames) {
 …（已按 8k 字符上限截断）
 </外部会话上下文>` : joined;
 }
+function formatAgentHandoffMessage(pane, frames) {
+  const sourceName = pane.agent?.name ? `@${pane.agent.name}` : `@${pane.title || pane.id}`;
+  const relevant = (frames ?? []).filter((f) => f.kind === "final" || f.kind === "text");
+  const latestFinal = [...relevant].reverse().find((f) => f.kind === "final");
+  const latestText = [...relevant].reverse().find((f) => f.kind === "text" && f.role !== "user") ?? [...relevant].reverse().find((f) => f.kind === "text");
+  const rawSummary = latestFinal?.text || latestText?.text || pane.summary || "（暂无摘要）";
+  const summary = rawSummary.length > 1200 ? `${rawSummary.slice(0, 1200)}…` : rawSummary;
+  const gate = pane.checks?.gate ?? "none";
+  const lines = [
+    `<来自 ${sourceName} 的交接>`,
+    `来源：${pane.title || pane.id} (${pane.id})`,
+    `目录：${pane.cwd || "—"}`,
+    `门禁状态：${gate}`,
+    "",
+    "最新进展：",
+    summary,
+    "",
+    "请基于以上交接继续处理。",
+    `</来自 ${sourceName} 的交接>`
+  ];
+  const joined = lines.join(`
+`);
+  return joined.length > 2000 ? `${joined.slice(0, 1950)}
+…（已截断）
+</来自 ${sourceName} 的交接>` : joined;
+}
 function Stage({
   pane,
+  panes = [],
   now,
   seen,
   activeTab,
@@ -3793,6 +3905,7 @@ function Stage({
   screenLoading,
   onRefreshScreen,
   onAct,
+  onHandoff,
   onHandoffContinue,
   inspectorOpen,
   onToggleInspector
@@ -3804,11 +3917,27 @@ function Stage({
   const [actionNotice, setActionNotice] = import_react3.useState(null);
   const [pendingConfirm, setPendingConfirm] = import_react3.useState(null);
   const [copied, setCopied] = import_react3.useState(false);
+  const [handoffOpen, setHandoffOpen] = import_react3.useState(false);
+  const [handoffTargetId, setHandoffTargetId] = import_react3.useState("");
+  const [handoffText, setHandoffText] = import_react3.useState("");
+  const [handoffSending, setHandoffSending] = import_react3.useState(false);
   import_react3.useEffect(() => {
     setActionNotice(null);
     setPendingConfirm(null);
     setCopied(false);
+    setHandoffOpen(false);
+    setHandoffTargetId("");
+    setHandoffText("");
   }, [pane?.id]);
+  const handoffTargets = import_react3.useMemo(() => (panes ?? []).filter((p) => p.id !== pane?.id && p.agent !== null && p.writable), [panes, pane?.id]);
+  import_react3.useEffect(() => {
+    if (!handoffOpen)
+      return;
+    if (handoffTargetId && handoffTargets.some((p) => p.id === handoffTargetId))
+      return;
+    const preferred = handoffTargets.find((p) => p.status !== "blocked") ?? handoffTargets[0];
+    setHandoffTargetId(preferred?.id ?? "");
+  }, [handoffOpen, handoffTargets, handoffTargetId]);
   if (!pane) {
     return /* @__PURE__ */ jsx_runtime3.jsx("main", {
       className: "dsh-fleet-stage",
@@ -3897,6 +4026,36 @@ function Stage({
       setTimeout(() => setCopied(false), 1800);
     } catch {
       setActionNotice({ kind: "info", text: "无法访问剪贴板，请手动复制上下文。" });
+    }
+  }
+  function handleToggleHandoff() {
+    if (handoffOpen) {
+      setHandoffOpen(false);
+      return;
+    }
+    const preferred = handoffTargets.find((p) => p.status !== "blocked") ?? handoffTargets[0];
+    setHandoffTargetId(preferred?.id ?? "");
+    setHandoffText(formatAgentHandoffMessage(pane, framesData?.frames ?? []));
+    setHandoffOpen(true);
+  }
+  async function handleSubmitHandoff(e) {
+    e?.preventDefault();
+    const text = handoffText.trim();
+    if (!text || !handoffTargetId || handoffSending)
+      return;
+    setHandoffSending(true);
+    try {
+      const res = typeof onHandoff === "function" ? await onHandoff(handoffTargetId, text) : await onAct?.({ verb: "prompt", pane: handoffTargetId, text });
+      if (res?.ok) {
+        setHandoffOpen(false);
+      } else if (res) {
+        setActionNotice({
+          kind: "error",
+          text: res.message || `交接失败：${res.reason ?? "unknown"}`
+        });
+      }
+    } finally {
+      setHandoffSending(false);
     }
   }
   const approvalExcerpt = import_react3.useMemo(() => {
@@ -4385,11 +4544,18 @@ function Stage({
             children: [
               /* @__PURE__ */ jsx_runtime3.jsx("span", {
                 style: { fontSize: 11, color: "var(--fleet-text-3)" },
-                children: "接着问会带上最近 20 条消息（超 8k 截断），在新会话里继续"
+                children: "可一键转交给其他可写 Agent / Bot，或带上最近 20 条消息开新会话"
               }),
               /* @__PURE__ */ jsx_runtime3.jsxs("div", {
                 className: "dsh-fleet-handoff-actions",
                 children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: `dsh-fleet-btn dsh-fleet-btn--sm ${handoffOpen ? "dsh-fleet-btn--active" : ""}`,
+                    onClick: handleToggleHandoff,
+                    "aria-expanded": handoffOpen,
+                    children: "转交给 Agent / Bot"
+                  }),
                   /* @__PURE__ */ jsx_runtime3.jsx("button", {
                     type: "button",
                     className: "dsh-fleet-btn dsh-fleet-btn--sm",
@@ -4402,6 +4568,98 @@ function Stage({
                     className: "dsh-fleet-btn dsh-fleet-btn--sm",
                     onClick: handleCopyContext,
                     children: copied ? "已复制 ✓" : "复制上下文"
+                  })
+                ]
+              })
+            ]
+          }),
+          pane.agent && handoffOpen && /* @__PURE__ */ jsx_runtime3.jsxs("form", {
+            className: "dsh-fleet-handoff-composer",
+            onSubmit: handleSubmitHandoff,
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                className: "dsh-fleet-handoff-composer-head",
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsxs("label", {
+                    className: "dsh-fleet-handoff-label",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                        children: "目标 Agent / Bot"
+                      }),
+                      /* @__PURE__ */ jsx_runtime3.jsx("select", {
+                        className: "dsh-fleet-select",
+                        value: handoffTargetId,
+                        onChange: (e) => setHandoffTargetId(e.target.value),
+                        disabled: handoffTargets.length === 0 || handoffSending,
+                        "aria-label": "选择交接目标 Agent 或 Bot",
+                        children: handoffTargets.length === 0 ? /* @__PURE__ */ jsx_runtime3.jsx("option", {
+                          value: "",
+                          children: "暂无其他可写 Agent / Bot"
+                        }) : handoffTargets.map((target) => {
+                          const tag = target.agent?.name ? `@${target.agent.name}` : target.title || target.id;
+                          const suffix = target.id.startsWith("bot:") ? " [Bot]" : "";
+                          const blockedSuffix = target.status === "blocked" ? " (等待审批)" : "";
+                          return /* @__PURE__ */ jsx_runtime3.jsxs("option", {
+                            value: target.id,
+                            children: [
+                              tag,
+                              " · ",
+                              target.agent?.kind ?? "agent",
+                              suffix,
+                              blockedSuffix
+                            ]
+                          }, target.id);
+                        })
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    onClick: () => setHandoffOpen(false),
+                    children: "收起"
+                  })
+                ]
+              }),
+              handoffTargets.length === 0 ? /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                className: "dsh-fleet-readonly-notice",
+                children: /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                  children: "当前没有其他可写的 Agent / Bot。可在左侧切换安全锁为「全部可写」，或点击「+ 接入 Bot」。"
+                })
+              }) : /* @__PURE__ */ jsx_runtime3.jsxs(jsx_runtime3.Fragment, {
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("textarea", {
+                    className: "dsh-fleet-handoff-textarea",
+                    value: handoffText,
+                    onChange: (e) => setHandoffText(e.target.value),
+                    onKeyDown: (e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        handleSubmitHandoff();
+                      }
+                    },
+                    rows: 5,
+                    disabled: handoffSending,
+                    "aria-label": "交接消息内容"
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                    className: "dsh-fleet-handoff-composer-foot",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+                        style: { fontSize: 11, color: "var(--fleet-text-3)" },
+                        children: [
+                          "⌘↵ 发送交接 · 长度 ",
+                          handoffText.length,
+                          " 字符"
+                        ]
+                      }),
+                      /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                        type: "submit",
+                        className: "dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm",
+                        disabled: handoffSending || !handoffTargetId || !handoffText.trim(),
+                        children: handoffSending ? "发送中…" : "发送交接"
+                      })
+                    ]
                   })
                 ]
               })
@@ -5369,11 +5627,292 @@ var FLEET_CSS = `
   flex: 1 1 auto;
 }
 
+/* Source filter pills, policy lock selector & bot badge */
+.dsh-fleet-roster-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dsh-fleet-roster-head .dsh-fleet-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dsh-fleet-source-pills {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 7px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  gap: 2px;
+}
+
+.dsh-fleet-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--fleet-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+
+.dsh-fleet-source-pill:hover {
+  color: var(--fleet-text);
+  background: var(--fleet-bg-subtle);
+}
+
+.dsh-fleet-source-pill--active {
+  background: color-mix(in srgb, var(--fleet-accent) 18%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-pill--bot {
+  color: var(--fleet-accent);
+  border-color: color-mix(in srgb, var(--fleet-accent) 42%, transparent);
+}
+
+.dsh-fleet-policy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.dsh-fleet-policy-label {
+  font-size: 11px;
+  color: var(--fleet-text-2);
+  white-space: nowrap;
+}
+
+.dsh-fleet-policy-select {
+  flex: 1 1 auto;
+  max-width: 148px;
+}
+
+.dsh-fleet-policy-select--read-only {
+  border-color: color-mix(in srgb, var(--fleet-c-blocked) 50%, transparent);
+  color: var(--fleet-c-blocked);
+}
+
+.dsh-fleet-policy-select--dsh-only {
+  border-color: color-mix(in srgb, var(--fleet-accent) 45%, transparent);
+}
+
+.dsh-fleet-policy-select--all {
+  border-color: color-mix(in srgb, var(--fleet-c-success) 45%, transparent);
+}
+
+/* Inline Handoff Composer */
+.dsh-fleet-handoff-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+}
+
+.dsh-fleet-handoff-composer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dsh-fleet-handoff-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-handoff-textarea {
+  width: 100%;
+  min-height: 84px;
+  max-height: 180px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text);
+  font-family: var(--fleet-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+.dsh-fleet-handoff-textarea:focus {
+  border-color: var(--fleet-accent);
+}
+
+.dsh-fleet-handoff-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Toast bar */
+.dsh-fleet-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-toast--success {
+  background: color-mix(in srgb, var(--fleet-c-success) 10%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-toast--error {
+  background: color-mix(in srgb, var(--fleet-c-error) 12%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-toast--info {
+  background: color-mix(in srgb, var(--fleet-accent) 10%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Inline External Bot Connect Drawer */
+.dsh-fleet-bot-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-bot-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.dsh-fleet-bot-drawer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .dsh-fleet-bot-drawer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.dsh-fleet-bot-snippet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dsh-fleet-bot-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-bot-pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text-2);
+  font-family: var(--fleet-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.dsh-fleet-bot-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-fleet-bot-form-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dsh-fleet-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-input {
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  color: var(--fleet-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.dsh-fleet-input:focus {
+  border-color: var(--fleet-accent);
+}
+
+.dsh-fleet-bot-error {
+  font-size: 11px;
+  color: var(--fleet-c-error);
+}
+
+.dsh-fleet-bot-form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dsh-fleet-dot--working {
     animation: none;
   }
-  .dsh-fleet-btn, .dsh-fleet-row {
+  .dsh-fleet-btn, .dsh-fleet-row, .dsh-fleet-source-pill {
     transition: none;
   }
 }
@@ -5388,6 +5927,22 @@ function ensureFleetStyles(doc = globalThis.document) {
   style.setAttribute("data-dsh-fleet-styles", "1");
   style.textContent = FLEET_CSS;
   doc.head.appendChild(style);
+}
+
+// lib/fleet/writability.js
+var POLICIES = Object.freeze(["all", "dsh-only", "read-only"]);
+function writability({ id, isAgent }, { policy = "all", dshPanes = new Set, connected = true, stale = false } = {}) {
+  if (!isAgent)
+    return { writable: false, reason: "not-an-agent" };
+  if (policy === "dsh-only") {
+    if (!dshPanes.has(id))
+      return { writable: false, reason: "policy-dsh-only" };
+  } else if (policy !== "all") {
+    return { writable: false, reason: "policy-read-only" };
+  }
+  if (!connected || stale)
+    return { writable: false, reason: "offline" };
+  return { writable: true, reason: null };
 }
 
 // src/fleet/transport.js
@@ -5859,6 +6414,20 @@ class LiveTransport {
       body: JSON.stringify(request)
     });
   }
+  async setPolicy(write) {
+    return await this._json(`${this.baseUrl}/policy`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ write })
+    });
+  }
+  async registerBot(bot) {
+    return await this._json(`${this.baseUrl}/bots/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(bot)
+    });
+  }
   close() {
     this._listeners.clear();
     this._closeStream();
@@ -6170,6 +6739,120 @@ class FixtureTransport {
     this._notify();
     return { ok: true, verb: request.verb, pane: pane.id, revision: pane.revision };
   }
+  _recomputeWritability() {
+    const write = this._state.policy?.write ?? "read-only";
+    const connected = Boolean(this._state.health?.connected);
+    const stale = Boolean(this._state.stale);
+    const dshPanes = new Set(this._state.panes.filter((p) => typeof p.agent?.name === "string" && p.agent.name.startsWith("dsh-")).map((p) => p.id));
+    for (const pane of this._state.panes) {
+      const { writable, reason } = writability({ id: pane.id, isAgent: pane.agent !== null }, { policy: write, dshPanes, connected, stale });
+      pane.writable = writable;
+      pane.writableReason = reason;
+    }
+  }
+  async setPolicy(write) {
+    if (typeof write !== "string" || !POLICIES.includes(write)) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "invalid-request",
+        message: "无效的写策略，仅支持 all / dsh-only / read-only"
+      };
+    }
+    this._state.policy = { write };
+    this._recomputeWritability();
+    this._state.now = this._now();
+    this._state.revision += 1;
+    this._notify();
+    return { ok: true, policy: { write } };
+  }
+  async registerBot(bot) {
+    if (!isPlainObject(bot) || typeof bot.id !== "string" || bot.id.trim() === "") {
+      return {
+        ok: false,
+        status: 400,
+        reason: "invalid-request",
+        message: "Bot id 必须是非空字符串"
+      };
+    }
+    const trimmedId = bot.id.trim();
+    const rawId = trimmedId.startsWith("bot:") ? trimmedId.slice(4).trim() : trimmedId;
+    if (!rawId) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "invalid-request",
+        message: "Bot id 必须是非空字符串"
+      };
+    }
+    const paneId = `bot:${rawId}`.slice(0, 64);
+    const nowMs = this._now();
+    const kind = typeof bot.kind === "string" && bot.kind.trim() ? bot.kind.trim() : "bot";
+    const rawName = typeof bot.name === "string" ? bot.name.trim() : "";
+    const agentName = AGENT_NAME_RE2.test(rawName) ? rawName : AGENT_NAME_RE2.test(rawId) ? rawId : null;
+    const display = typeof bot.display === "string" && bot.display.trim() ? bot.display.trim() : rawName || `${kind} · ${rawId}`;
+    const title = typeof bot.title === "string" && bot.title.trim() ? bot.title.trim() : rawName || rawId;
+    const summary = typeof bot.summary === "string" ? bot.summary.trim().slice(0, 240) : "";
+    const status = ["working", "blocked", "done", "idle", "unknown"].includes(bot.status) ? bot.status : "idle";
+    const pane = {
+      id: paneId,
+      workspaceId: "bots",
+      tabId: paneId,
+      workspaceLabel: "Agent Bots",
+      tabLabel: kind,
+      title,
+      cwd: typeof bot.cwd === "string" && bot.cwd.trim() ? bot.cwd.trim() : "~",
+      focused: false,
+      agent: {
+        kind,
+        name: agentName,
+        display,
+        session: null,
+        interactiveReady: true
+      },
+      status,
+      stalled: false,
+      completionSeq: 0,
+      stateChangeSeq: 1,
+      stateSince: nowMs,
+      outputAt: nowMs,
+      revision: 1,
+      summary,
+      summarySource: summary ? "transcript" : "none",
+      writable: true,
+      writableReason: null,
+      checks: { ...NO_CHECKS, steps: [] }
+    };
+    const existingIdx = this._state.panes.findIndex((p) => p.id === paneId);
+    if (existingIdx >= 0) {
+      pane.revision = (this._state.panes[existingIdx].revision ?? 0) + 1;
+      this._state.panes[existingIdx] = pane;
+    } else {
+      this._state.panes.push(pane);
+    }
+    if (!this._frames[paneId]) {
+      this._frames[paneId] = {
+        ok: true,
+        paneId,
+        source: "transcript",
+        reason: null,
+        agentKind: kind,
+        sessionId: paneId,
+        frames: summary ? [{ kind: "text", id: `bot-init-${this._seq++}`, role: "assistant", text: summary, at: nowMs }] : [],
+        hasEarlier: false,
+        partial: false,
+        reset: false,
+        unknownFrames: 0,
+        cursor: { start: "o:0", end: `o:${this._seq}` }
+      };
+    }
+    this._recomputeWritability();
+    recomputeCountsAndWorkspaces(this._state);
+    this._state.now = nowMs;
+    this._state.revision += 1;
+    this._notify();
+    return { ok: true, pane: structuredClone(pane) };
+  }
   close() {
     this._listeners.clear();
   }
@@ -6177,6 +6860,213 @@ class FixtureTransport {
 
 // src/fleet/fleet-view.jsx
 var jsx_runtime4 = require("react/jsx-runtime");
+var POLICY_LABEL_MAP = Object.fromEntries(POLICY_OPTIONS.map((o) => [o.value, o.label]));
+function buildBotCurlSnippet(baseUrl) {
+  const origin = globalThis.location?.origin || "http://127.0.0.1:4310";
+  const root = `${origin}${baseUrl || "/plugin/fleet"}`;
+  return [
+    "# 1) 注册外部 Agent Bot",
+    `curl -X POST ${root}/bots/register \\`,
+    "  -H 'content-type: application/json' \\",
+    `  -d '{"id":"my-bot","name":"my-bot","kind":"webhook","summary":"就绪，等待任务"}'`,
+    "",
+    "# 2) 发送心跳更新状态",
+    `curl -X POST ${root}/bots/heartbeat \\`,
+    "  -H 'content-type: application/json' \\",
+    `  -d '{"id":"my-bot","status":"working","summary":"正在处理任务"}'`
+  ].join(`
+`);
+}
+function BotConnectDrawer({ baseUrl, onClose, onRegister }) {
+  const [botId, setBotId] = import_react4.useState("");
+  const [botName, setBotName] = import_react4.useState("");
+  const [botKind, setBotKind] = import_react4.useState("webhook");
+  const [botSummary, setBotSummary] = import_react4.useState("");
+  const [submitting, setSubmitting] = import_react4.useState(false);
+  const [copiedCurl, setCopiedCurl] = import_react4.useState(false);
+  const [formError, setFormError] = import_react4.useState(null);
+  const curlSnippet = import_react4.useMemo(() => buildBotCurlSnippet(baseUrl), [baseUrl]);
+  async function handleCopySnippet() {
+    try {
+      await globalThis.navigator?.clipboard?.writeText(curlSnippet);
+      setCopiedCurl(true);
+      setTimeout(() => setCopiedCurl(false), 1800);
+    } catch {
+      setFormError("无法访问剪贴板，请手动复制下方 curl 命令。");
+    }
+  }
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const cleanId = botId.trim();
+    if (!cleanId || submitting) {
+      setFormError("请输入 Bot ID（例如 review-bot）");
+      return;
+    }
+    setFormError(null);
+    setSubmitting(true);
+    try {
+      const res = await onRegister({
+        id: cleanId,
+        name: botName.trim() || cleanId,
+        kind: botKind.trim() || "webhook",
+        summary: botSummary.trim()
+      });
+      if (res?.ok) {
+        setBotId("");
+        setBotName("");
+        setBotSummary("");
+        onClose();
+      } else {
+        setFormError(res?.message || `接入失败：${res?.reason ?? "unknown"}`);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  return /* @__PURE__ */ jsx_runtime4.jsxs("section", {
+    className: "dsh-fleet-bot-drawer",
+    "aria-label": "接入外部 Agent Bot",
+    children: [
+      /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: "dsh-fleet-bot-drawer-head",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsx("strong", {
+            children: "接入外部 Agent Bot"
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsx("button", {
+            type: "button",
+            className: "dsh-fleet-btn dsh-fleet-btn--sm",
+            onClick: onClose,
+            children: "关闭"
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: "dsh-fleet-bot-drawer-grid",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+            className: "dsh-fleet-bot-snippet",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+                className: "dsh-fleet-bot-snippet-head",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                    children: "HTTP 注册与心跳示例（curl）"
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    onClick: handleCopySnippet,
+                    children: copiedCurl ? "已复制 ✓" : "复制 curl"
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsx("pre", {
+                className: "dsh-fleet-bot-pre",
+                children: curlSnippet
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsxs("form", {
+            className: "dsh-fleet-bot-form",
+            onSubmit: handleSubmit,
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+                className: "dsh-fleet-bot-form-row",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+                    className: "dsh-fleet-field",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                        children: "Bot ID *"
+                      }),
+                      /* @__PURE__ */ jsx_runtime4.jsx("input", {
+                        type: "text",
+                        className: "dsh-fleet-input",
+                        value: botId,
+                        onChange: (e) => setBotId(e.target.value),
+                        placeholder: "例如 ops-bot",
+                        disabled: submitting
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+                    className: "dsh-fleet-field",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                        children: "名称"
+                      }),
+                      /* @__PURE__ */ jsx_runtime4.jsx("input", {
+                        type: "text",
+                        className: "dsh-fleet-input",
+                        value: botName,
+                        onChange: (e) => setBotName(e.target.value),
+                        placeholder: "例如 ops-helper",
+                        disabled: submitting
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+                    className: "dsh-fleet-field",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                        children: "类型 (kind)"
+                      }),
+                      /* @__PURE__ */ jsx_runtime4.jsx("input", {
+                        type: "text",
+                        className: "dsh-fleet-input",
+                        value: botKind,
+                        onChange: (e) => setBotKind(e.target.value),
+                        placeholder: "webhook / daemon / im",
+                        disabled: submitting
+                      })
+                    ]
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsxs("label", {
+                className: "dsh-fleet-field",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                    children: "初始摘要 (summary)"
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsx("input", {
+                    type: "text",
+                    className: "dsh-fleet-input",
+                    value: botSummary,
+                    onChange: (e) => setBotSummary(e.target.value),
+                    placeholder: "例如：监听部署告警并等待指令",
+                    disabled: submitting
+                  })
+                ]
+              }),
+              formError && /* @__PURE__ */ jsx_runtime4.jsx("div", {
+                className: "dsh-fleet-bot-error",
+                role: "alert",
+                children: formError
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+                className: "dsh-fleet-bot-form-foot",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                    style: { fontSize: 11, color: "var(--fleet-text-3)" },
+                    children: "提交后立即注册为 bot:<id> 面板并出现在名册中"
+                  }),
+                  /* @__PURE__ */ jsx_runtime4.jsx("button", {
+                    type: "submit",
+                    className: "dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm",
+                    disabled: submitting || !botId.trim(),
+                    children: submitting ? "接入中…" : "立即接入测试"
+                  })
+                ]
+              })
+            ]
+          })
+        ]
+      })
+    ]
+  });
+}
 var SEEN_STORAGE_KEY = "dsh-fleet:seen:v1";
 function loadSeenMap() {
   try {
@@ -6225,8 +7115,27 @@ function FleetView({
   const [framesLoading, setFramesLoading] = import_react4.useState(false);
   const [screenData, setScreenData] = import_react4.useState(null);
   const [screenLoading, setScreenLoading] = import_react4.useState(false);
+  const [policyUpdating, setPolicyUpdating] = import_react4.useState(false);
+  const [botDrawerOpen, setBotDrawerOpen] = import_react4.useState(false);
+  const [toast, setToast] = import_react4.useState(null);
   const searchInputRef = import_react4.useRef(null);
   const lastFetchedRef = import_react4.useRef({ paneId: null, revision: null, cursorEnd: null });
+  const toastTimerRef = import_react4.useRef(null);
+  const showToast = import_react4.useCallback((nextToast, durationMs = 5000) => {
+    if (toastTimerRef.current)
+      clearTimeout(toastTimerRef.current);
+    setToast(nextToast);
+    if (durationMs > 0) {
+      toastTimerRef.current = setTimeout(() => {
+        setToast(null);
+        toastTimerRef.current = null;
+      }, durationMs);
+    }
+  }, []);
+  import_react4.useEffect(() => () => {
+    if (toastTimerRef.current)
+      clearTimeout(toastTimerRef.current);
+  }, []);
   import_react4.useEffect(() => {
     ensureFleetStyles();
   }, []);
@@ -6418,6 +7327,67 @@ function FleetView({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [orderedPanes, selectedId]);
   const handleAct = import_react4.useCallback((req) => transport.act(req), [transport]);
+  const handleSetPolicy = import_react4.useCallback(async (nextPolicy) => {
+    if (typeof transport.setPolicy !== "function")
+      return;
+    setPolicyUpdating(true);
+    try {
+      const res = await transport.setPolicy(nextPolicy);
+      if (res?.ok) {
+        const label = POLICY_LABEL_MAP[nextPolicy] ?? nextPolicy;
+        showToast({ kind: "success", text: `安全锁已切换为：${label}` });
+      } else {
+        showToast({
+          kind: "error",
+          text: res?.message || `切换写策略失败：${res?.reason ?? "unknown"}`
+        });
+      }
+      return res;
+    } finally {
+      setPolicyUpdating(false);
+    }
+  }, [transport, showToast]);
+  const handleAgentHandoff = import_react4.useCallback(async (targetPaneId, text) => {
+    const targetPane = (state?.panes ?? []).find((p) => p.id === targetPaneId);
+    const targetLabel = targetPane?.agent?.name ? `@${targetPane.agent.name}` : targetPane?.title || targetPaneId;
+    const res = await transport.act({ verb: "prompt", pane: targetPaneId, text });
+    if (res?.ok) {
+      showToast({
+        kind: "success",
+        text: `已将交接上下文发送给 ${targetLabel}`,
+        targetPaneId,
+        targetLabel
+      }, 7000);
+    } else {
+      showToast({
+        kind: "error",
+        text: res?.message || `交接发送失败：${res?.reason ?? "unknown"}`
+      });
+    }
+    return res;
+  }, [transport, state?.panes, showToast]);
+  const handleRegisterBot = import_react4.useCallback(async (bot) => {
+    if (typeof transport.registerBot !== "function") {
+      return { ok: false, reason: "unsupported", message: "当前传输层不支持注册外部 Bot" };
+    }
+    const res = await transport.registerBot(bot);
+    if (res?.ok) {
+      const paneId = res.pane?.id || res.bot?.id || `bot:${bot.id}`;
+      setSelectedId(paneId);
+      showToast({
+        kind: "success",
+        text: `已接入外部 Bot：${paneId}`,
+        targetPaneId: paneId,
+        targetLabel: paneId
+      });
+    } else {
+      showToast({
+        kind: "error",
+        text: res?.message || `接入 Bot 失败：${res?.reason ?? "unknown"}`
+      });
+    }
+    return res;
+  }, [transport, showToast]);
   const handleHandoff = import_react4.useCallback((pane, frames) => {
     const contextText = formatHandoffContext(pane, frames);
     if (typeof onHandoffContinue === "function") {
@@ -6560,6 +7530,43 @@ function FleetView({
           })
         ]
       }),
+      toast && /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: `dsh-fleet-toast dsh-fleet-toast--${toast.kind}`,
+        role: "status",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsx("span", {
+            children: toast.text
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+            className: "dsh-fleet-toast-actions",
+            children: [
+              toast.targetPaneId && /* @__PURE__ */ jsx_runtime4.jsxs("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--sm dsh-fleet-btn--primary",
+                onClick: () => {
+                  setSelectedId(toast.targetPaneId);
+                  setToast(null);
+                },
+                children: [
+                  "跳到 ",
+                  toast.targetLabel || toast.targetPaneId
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime4.jsx("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                onClick: () => setToast(null),
+                children: "关闭"
+              })
+            ]
+          })
+        ]
+      }),
+      botDrawerOpen && /* @__PURE__ */ jsx_runtime4.jsx(BotConnectDrawer, {
+        baseUrl: transport.baseUrl,
+        onClose: () => setBotDrawerOpen(false),
+        onRegister: handleRegisterBot
+      }),
       isOfflineNeverConnected ? /* @__PURE__ */ jsx_runtime4.jsxs("div", {
         className: "dsh-fleet-empty",
         children: [
@@ -6586,8 +7593,14 @@ function FleetView({
             children: [
               "herdr 已连接，当前仅有 ",
               counts?.shells ?? 0,
-              " 个普通终端面板。启动任意 Agent 后会自动出现在这里。"
+              " 个普通终端面板。启动任意 Agent 或接入外部 Bot 后会自动出现在这里。"
             ]
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsx("button", {
+            type: "button",
+            className: "dsh-fleet-btn dsh-fleet-btn--primary",
+            onClick: () => setBotDrawerOpen(true),
+            children: "+ 接入外部 Agent Bot"
           })
         ]
       }) : /* @__PURE__ */ jsx_runtime4.jsxs("div", {
@@ -6599,10 +7612,14 @@ function FleetView({
             seen,
             selectedId,
             onSelect: setSelectedId,
-            searchInputRef
+            searchInputRef,
+            onSetPolicy: handleSetPolicy,
+            policyUpdating,
+            onOpenBotDrawer: () => setBotDrawerOpen((v) => !v)
           }),
           /* @__PURE__ */ jsx_runtime4.jsx(Stage, {
             pane: selectedPane,
+            panes: state?.panes ?? [],
             now,
             seen,
             activeTab,
@@ -6614,6 +7631,7 @@ function FleetView({
             screenLoading,
             onRefreshScreen: refreshScreen,
             onAct: handleAct,
+            onHandoff: handleAgentHandoff,
             onHandoffContinue: handleHandoff,
             inspectorOpen,
             onToggleInspector: () => setInspectorOpen((v) => !v)

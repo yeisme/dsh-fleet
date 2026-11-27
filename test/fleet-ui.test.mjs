@@ -222,4 +222,99 @@ describe('FixtureTransport', () => {
     assert.equal(latest.agent.name, 'dsh-builder')
     assert.equal(latest.status, 'idle')
   })
+
+  it('setPolicy() updates policy.write and pane writability, preserves not-an-agent on shells, and rejects invalid policies', async () => {
+    const transport = new FixtureTransport({ scenario: 'busy', delta: 0 })
+    const snapshots = []
+    const unsub = transport.subscribe((s) => snapshots.push(s))
+    const revBefore = snapshots[0].revision
+
+    // Invalid policy is rejected without mutating state or notifying subscribers
+    const badRes = await transport.setPolicy('sudo-all')
+    assert.equal(badRes.ok, false)
+    assert.equal(badRes.reason, 'invalid-request')
+    assert.equal(snapshots.length, 1)
+
+    // Switch to read-only: agents become policy-read-only, shell preserves not-an-agent
+    const roRes = await transport.setPolicy('read-only')
+    assert.equal(roRes.ok, true)
+    assert.equal(snapshots.length, 2)
+    const roState = snapshots[1]
+    assert.equal(roState.policy.write, 'read-only')
+    assert.equal(roState.revision, revBefore + 1)
+    const roAgent = roState.panes.find((p) => p.id === 'w1:p1')
+    assert.equal(roAgent.writable, false)
+    assert.equal(roAgent.writableReason, 'policy-read-only')
+    const roShell = roState.panes.find((p) => p.agent === null)
+    assert.ok(roShell, 'busy scenario must include a shell pane')
+    assert.equal(roShell.writable, false)
+    assert.equal(roShell.writableReason, 'not-an-agent')
+
+    // Switch to dsh-only: dsh-* agents stay writable, non-dsh agent becomes policy-dsh-only, shell stays not-an-agent
+    const dshRes = await transport.setPolicy('dsh-only')
+    assert.equal(dshRes.ok, true)
+    const dshState = snapshots[2]
+    assert.equal(dshState.policy.write, 'dsh-only')
+    const dshAgent = dshState.panes.find((p) => p.id === 'w1:p1')
+    assert.equal(dshAgent.writable, true)
+    assert.equal(dshAgent.writableReason, null)
+    const externalAgent = dshState.panes.find((p) => p.id === 'w1:p4')
+    assert.equal(externalAgent.writable, false)
+    assert.equal(externalAgent.writableReason, 'policy-dsh-only')
+    const dshShell = dshState.panes.find((p) => p.agent === null)
+    assert.equal(dshShell.writable, false)
+    assert.equal(dshShell.writableReason, 'not-an-agent')
+
+    // Switch back to all: all agents writable again, shell still not-an-agent
+    const allRes = await transport.setPolicy('all')
+    assert.equal(allRes.ok, true)
+    const allState = snapshots[3]
+    assert.equal(allState.policy.write, 'all')
+    assert.equal(allState.panes.find((p) => p.id === 'w1:p4').writable, true)
+    assert.equal(allState.panes.find((p) => p.agent === null).writableReason, 'not-an-agent')
+
+    unsub()
+  })
+
+  it('registerBot() creates a bot:* pane, updates counts/workspaces, respects policy, and notifies subscribers', async () => {
+    const transport = new FixtureTransport({ scenario: 'busy', delta: 0 })
+    const snapshots = []
+    const unsub = transport.subscribe((s) => snapshots.push(s))
+    const initialCount = snapshots[0].panes.length
+
+    // Rejects missing/empty id
+    const badRes = await transport.registerBot({ id: '   ', name: 'empty' })
+    assert.equal(badRes.ok, false)
+    assert.equal(badRes.reason, 'invalid-request')
+    assert.equal(snapshots.length, 1)
+
+    // Registers valid external bot
+    const okRes = await transport.registerBot({
+      id: 'ops-bot',
+      name: 'ops-bot',
+      kind: 'webhook',
+      summary: '监听部署告警',
+    })
+    assert.equal(okRes.ok, true)
+    assert.equal(okRes.pane.id, 'bot:ops-bot')
+    assert.equal(okRes.pane.workspaceId, 'bots')
+    assert.equal(okRes.pane.agent.kind, 'webhook')
+    assert.equal(okRes.pane.summary, '监听部署告警')
+    assert.equal(okRes.pane.writable, true)
+    assert.equal(snapshots.length, 2)
+    assert.equal(snapshots[1].panes.length, initialCount + 1)
+    assert.ok(snapshots[1].workspaces.some((w) => w.id === 'bots'))
+
+    // Handing off a prompt to the newly registered bot works via act()
+    const handoffRes = await transport.act({
+      verb: 'prompt',
+      pane: 'bot:ops-bot',
+      text: '<来自 @dsh-reviewer 的交接>\n请跟进部署\n</来自 @dsh-reviewer 的交接>',
+    })
+    assert.equal(handoffRes.ok, true)
+    const updatedBot = snapshots[snapshots.length - 1].panes.find((p) => p.id === 'bot:ops-bot')
+    assert.equal(updatedBot.status, 'working')
+
+    unsub()
+  })
 })
