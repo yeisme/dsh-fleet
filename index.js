@@ -14,13 +14,17 @@ import { mkdir, open, readFile, readdir, realpath, stat, writeFile } from 'node:
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { applyFleetHost } from './lib/fleet/host.js'
+import { discoverSocket } from './lib/herdr/discover.js'
+import { HerdrClient } from './lib/herdr/protocol.js'
+import { HerdrState } from './lib/herdr/state.js'
+import { FleetStore } from './lib/fleet/store.js'
+import { FleetService } from './lib/fleet/service.js'
+import { installFleetRoutes } from './lib/http.js'
 
 export const name = 'threads'
 
 /** Services used directly. */
 export const inject = ['webServer', 'connection', 'commands']
-// Fleet host wiring lives in its own module so it can be tested without a host: see lib/fleet/host.js.
 
 const PI_HOME = join(homedir(), '.pi', 'agent', 'sessions')
 const HERDR_STATE = join(homedir(), '.config', 'herdr', 'session.json')
@@ -802,11 +806,25 @@ export function apply(ctx) {
     ctx.logger?.debug?.('threads: /btw left to the retiring bundle: %s', String(error?.message ?? error))
   }
 
-  // The Fleet routes are additive: a machine with no herdr still gets the thread routes above, and the Fleet page
-  // reports the missing connection honestly. A failure to build the host is logged, never thrown at the host.
-  try {
-    applyFleetHost(ctx)
-  } catch (error) {
-    ctx.logger?.warn?.('fleet: routes not registered: %s', String(error?.message ?? error))
-  }
+  /* --- fleet (/plugin/fleet/*) --- */
+  const { socketPath } = discoverSocket()
+  const fleetClient = new HerdrClient({ socketPath })
+  const fleetState = new HerdrState(fleetClient, { session: process.env.HERDR_SESSION ?? null })
+  const fleetStore = new FleetStore({ file: join(homedir(), '.dsh', 'fleet', 'store.json') })
+  const fleetService = new FleetService({
+    client: fleetClient,
+    state: fleetState,
+    store: fleetStore,
+    log: (entry) => {
+      ctx.logger?.info?.('fleet: act %s pane=%s ok=%s reason=%s ms=%d', entry.verb ?? '-', entry.pane ?? '-', entry.ok, entry.reason ?? '-', entry.ms)
+    },
+  })
+  installFleetRoutes(ctx, { service: fleetService })
+  ctx.effect(() => {
+    void fleetService.start()
+    return () => {
+      fleetService.stop()
+      fleetClient.close()
+    }
+  }, 'fleet: service')
 }

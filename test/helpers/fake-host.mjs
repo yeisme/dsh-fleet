@@ -248,7 +248,11 @@ export async function recordManifest(code, { fileName = 'bundle.js' } = {}) {
   if (handoff === undefined) throw new Error('bundle never called window.__ModuleLoader__.load')
 
   const asked = new Set()
-  const seeds = { react: permissiveReact(), 'react-dom': { createPortal: (...a) => ({ $$: 'portal', a }) } }
+  const seeds = {
+    react: permissiveReact(),
+    'react/jsx-runtime': { jsx: (...a) => ({ via: 'jsx', a }), jsxs: (...a) => ({ via: 'jsxs', a }), Fragment: Symbol('Fragment') },
+    'react-dom': { createPortal: (...a) => ({ $$: 'portal', a }) },
+  }
   const hostRequire = (spec) => {
     asked.add(spec)
     if (spec in seeds) return seeds[spec]

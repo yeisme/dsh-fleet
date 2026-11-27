@@ -2301,6 +2301,8 @@ function createLegacy(require) {
 
 /* glue (scripts/build.mjs): legacy factory bound to this module's host-provided require */
 function createLegacyPlugin(){return createLegacy(require)}
+var __create = Object.create;
+var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -2308,6 +2310,30 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 function __accessProp(key) {
   return this[key];
 }
+var __toESMCache_node;
+var __toESMCache_esm;
+var __toESM = (mod, isNodeMode, target) => {
+  var canCache = mod != null && typeof mod === "object";
+  if (canCache) {
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+    var cached = cache.get(mod);
+    if (cached)
+      return cached;
+  }
+  target = mod != null ? __create(__getProtoOf(mod)) : {};
+  const to = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  if (mod && typeof mod === "object" || typeof mod === "function") {
+    for (let key of __getOwnPropNames(mod))
+      if (!__hasOwnProp.call(to, key))
+        __defProp(to, key, {
+          get: __accessProp.bind(mod, key),
+          enumerable: true
+        });
+  }
+  if (canCache)
+    cache.set(mod, to);
+  return to;
+};
 var __toCommonJS = (from) => {
   var entry = (__moduleCache ??= new WeakMap).get(from), desc;
   if (entry)
@@ -2346,10 +2372,4404 @@ __export(exports_main, {
   inject: () => inject
 });
 module.exports = __toCommonJS(exports_main);
+var import_react5 = __toESM(require("react"), 1);
+
+// src/fleet/fleet-view.jsx
+var import_react4 = require("react");
+
+// lib/fleet/attention.js
+var STALL_MS = 180000;
+var ATTENTION_GROUPS = Object.freeze({
+  blocked: 0,
+  unread: 1,
+  stalled: 2,
+  working: 3,
+  unknown: 4,
+  read: 5,
+  idle: 6,
+  shell: 7
+});
+var finite = (value) => typeof value === "number" && Number.isFinite(value);
+function isStalled(pane, now = Date.now(), stallMs = STALL_MS) {
+  if (pane?.status !== "working" || !finite(pane.outputAt))
+    return false;
+  return now - pane.outputAt > stallMs;
+}
+var readMark = (seen, id) => {
+  const mark = seen?.[id];
+  return finite(mark) ? mark : 0;
+};
+function isSeen(pane, seen = {}) {
+  return readMark(seen, pane?.id) >= (finite(pane?.completionSeq) ? pane.completionSeq : 0);
+}
+function isUnread(pane, seen = {}) {
+  return pane?.status === "done" && !isSeen(pane, seen);
+}
+function attentionGroup(pane, { now = Date.now(), stallMs = STALL_MS, seen = {} } = {}) {
+  if (pane?.agent === null)
+    return ATTENTION_GROUPS.shell;
+  switch (pane?.status) {
+    case "blocked":
+      return ATTENTION_GROUPS.blocked;
+    case "done":
+      return isUnread(pane, seen) ? ATTENTION_GROUPS.unread : ATTENTION_GROUPS.read;
+    case "working":
+      return isStalled(pane, now, stallMs) ? ATTENTION_GROUPS.stalled : ATTENTION_GROUPS.working;
+    case "idle":
+      return ATTENTION_GROUPS.idle;
+    default:
+      return ATTENTION_GROUPS.unknown;
+  }
+}
+var byId = new Intl.Collator("en", { numeric: true });
+function compareRanked(a, b) {
+  if (a.group !== b.group)
+    return a.group - b.group;
+  const sinceA = finite(a.pane.stateSince) ? a.pane.stateSince : Infinity;
+  const sinceB = finite(b.pane.stateSince) ? b.pane.stateSince : Infinity;
+  if (sinceA !== sinceB)
+    return sinceA < sinceB ? -1 : 1;
+  return byId.compare(String(a.pane.id), String(b.pane.id));
+}
+function sortByAttention(panes, { now = Date.now(), stallMs = STALL_MS, seen = {} } = {}) {
+  const ctx = { now, stallMs, seen };
+  return panes.map((pane) => ({ pane, group: attentionGroup(pane, ctx) })).sort(compareRanked).map(({ pane }) => pane);
+}
+function formatElapsed(ms) {
+  if (!finite(ms) || ms < 0)
+    return "—";
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60)
+    return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60)
+    return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24)
+    return `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ""}`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+// src/fleet/inspector.jsx
+var import_react = require("react");
+var jsx_runtime = require("react/jsx-runtime");
+var AGENT_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+var GATE_LABELS = {
+  none: "未配置",
+  running: "运行中",
+  passed: "通过",
+  failed: "失败",
+  stale: "已过期（代码已变更）"
+};
+var STEP_ICONS = {
+  passed: "✓",
+  failed: "✕",
+  skipped: "–"
+};
+function Inspector({ pane, now, onAct, onClose }) {
+  const [nameInput, setNameInput] = import_react.useState(pane?.agent?.name ?? "");
+  const [renaming, setRenaming] = import_react.useState(false);
+  const [renameMsg, setRenameMsg] = import_react.useState("");
+  import_react.useEffect(() => {
+    setNameInput(pane?.agent?.name ?? "");
+    setRenameMsg("");
+  }, [pane?.id, pane?.agent?.name]);
+  if (!pane)
+    return null;
+  const checks = pane.checks ?? {
+    gate: "none",
+    startedAt: null,
+    durationMs: null,
+    baseRevision: null,
+    headRevision: null,
+    steps: [],
+    failure: null
+  };
+  async function handleRename(e) {
+    e.preventDefault();
+    const next = nameInput.trim();
+    if (!AGENT_NAME_RE.test(next)) {
+      setRenameMsg("名称需匹配 ^[a-z][a-z0-9_-]{0,31}$");
+      return;
+    }
+    setRenaming(true);
+    setRenameMsg("");
+    try {
+      const res = await onAct({ verb: "rename", pane: pane.id, name: next });
+      if (res?.ok)
+        setRenameMsg("已更新名称");
+      else
+        setRenameMsg(res?.message || res?.reason || "重命名失败");
+    } finally {
+      setRenaming(false);
+    }
+  }
+  return /* @__PURE__ */ jsx_runtime.jsxs("aside", {
+    className: "dsh-fleet-inspector",
+    "aria-label": "面板详情",
+    children: [
+      /* @__PURE__ */ jsx_runtime.jsxs("div", {
+        style: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+        children: [
+          /* @__PURE__ */ jsx_runtime.jsxs("span", {
+            className: "dsh-fleet-section-title",
+            children: [
+              "详情 · ",
+              pane.id
+            ]
+          }),
+          onClose && /* @__PURE__ */ jsx_runtime.jsx("button", {
+            type: "button",
+            className: "dsh-fleet-btn dsh-fleet-btn--sm",
+            onClick: onClose,
+            children: "收起"
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime.jsxs("section", {
+        className: "dsh-fleet-section",
+        children: [
+          /* @__PURE__ */ jsx_runtime.jsx("div", {
+            className: "dsh-fleet-section-title",
+            children: "位置与状态"
+          }),
+          /* @__PURE__ */ jsx_runtime.jsxs("div", {
+            className: "dsh-fleet-kv",
+            children: [
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "工作区"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsxs("span", {
+                className: "dsh-fleet-kv-v",
+                children: [
+                  pane.workspaceLabel,
+                  " / ",
+                  pane.tabLabel
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "目录"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-v",
+                style: { fontFamily: "var(--fleet-mono)", fontSize: 11 },
+                children: pane.cwd
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "状态"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsxs("span", {
+                className: "dsh-fleet-kv-v",
+                children: [
+                  pane.status,
+                  pane.stalled ? "（停滞）" : ""
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "持续时长"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-v dsh-fleet-num",
+                children: formatElapsed(now - pane.stateSince)
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "最近输出"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-v dsh-fleet-num",
+                children: pane.outputAt !== null ? `${formatElapsed(now - pane.outputAt)} 前` : "—"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "Revision"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsxs("span", {
+                className: "dsh-fleet-kv-v dsh-fleet-num",
+                children: [
+                  "#",
+                  pane.revision
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "写权限"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-v",
+                children: pane.writable ? "可写" : `只读 (${pane.writableReason ?? "unknown"})`
+              })
+            ]
+          })
+        ]
+      }),
+      pane.agent && /* @__PURE__ */ jsx_runtime.jsxs("section", {
+        className: "dsh-fleet-section",
+        children: [
+          /* @__PURE__ */ jsx_runtime.jsx("div", {
+            className: "dsh-fleet-section-title",
+            children: "Agent 元数据"
+          }),
+          /* @__PURE__ */ jsx_runtime.jsxs("div", {
+            className: "dsh-fleet-kv",
+            children: [
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "类型"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-v",
+                children: pane.agent.kind
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "展示名"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-v",
+                children: pane.agent.display
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-k",
+                children: "交互就绪"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-kv-v",
+                children: pane.agent.interactiveReady === null ? "未知" : pane.agent.interactiveReady ? "是" : "否"
+              }),
+              pane.agent.session && /* @__PURE__ */ jsx_runtime.jsxs(jsx_runtime.Fragment, {
+                children: [
+                  /* @__PURE__ */ jsx_runtime.jsx("span", {
+                    className: "dsh-fleet-kv-k",
+                    children: "会话来源"
+                  }),
+                  /* @__PURE__ */ jsx_runtime.jsxs("span", {
+                    className: "dsh-fleet-kv-v",
+                    children: [
+                      pane.agent.session.source,
+                      " (",
+                      pane.agent.session.kind,
+                      ")"
+                    ]
+                  })
+                ]
+              })
+            ]
+          }),
+          pane.writable && /* @__PURE__ */ jsx_runtime.jsxs("form", {
+            onSubmit: handleRename,
+            style: { display: "flex", flexDirection: "column", gap: 6, marginTop: 6 },
+            children: [
+              /* @__PURE__ */ jsx_runtime.jsx("label", {
+                className: "dsh-fleet-section-title",
+                htmlFor: `fleet-rename-${pane.id}`,
+                children: "重命名 Agent"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsxs("div", {
+                style: { display: "flex", gap: 6 },
+                children: [
+                  /* @__PURE__ */ jsx_runtime.jsx("input", {
+                    id: `fleet-rename-${pane.id}`,
+                    type: "text",
+                    className: "dsh-fleet-approval-input",
+                    value: nameInput,
+                    onChange: (e) => setNameInput(e.target.value),
+                    placeholder: "my-agent-name",
+                    disabled: renaming
+                  }),
+                  /* @__PURE__ */ jsx_runtime.jsx("button", {
+                    type: "submit",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    disabled: renaming,
+                    children: "保存"
+                  })
+                ]
+              }),
+              renameMsg && /* @__PURE__ */ jsx_runtime.jsx("span", {
+                style: { fontSize: 11, color: "var(--fleet-text-2)" },
+                children: renameMsg
+              })
+            ]
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime.jsxs("section", {
+        className: "dsh-fleet-section",
+        children: [
+          /* @__PURE__ */ jsx_runtime.jsxs("div", {
+            style: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+            children: [
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: "dsh-fleet-section-title",
+                children: "门禁 Checks"
+              }),
+              /* @__PURE__ */ jsx_runtime.jsx("span", {
+                className: `dsh-fleet-pill ${checks.gate !== "none" ? `dsh-fleet-pill--${checks.gate}` : ""}`,
+                children: GATE_LABELS[checks.gate] ?? checks.gate
+              })
+            ]
+          }),
+          (checks.baseRevision || checks.headRevision || checks.durationMs !== null) && /* @__PURE__ */ jsx_runtime.jsxs("div", {
+            className: "dsh-fleet-kv",
+            children: [
+              checks.baseRevision && /* @__PURE__ */ jsx_runtime.jsxs(jsx_runtime.Fragment, {
+                children: [
+                  /* @__PURE__ */ jsx_runtime.jsx("span", {
+                    className: "dsh-fleet-kv-k",
+                    children: "Base"
+                  }),
+                  /* @__PURE__ */ jsx_runtime.jsx("span", {
+                    className: "dsh-fleet-kv-v",
+                    style: { fontFamily: "var(--fleet-mono)", fontSize: 11 },
+                    children: checks.baseRevision
+                  })
+                ]
+              }),
+              checks.headRevision && /* @__PURE__ */ jsx_runtime.jsxs(jsx_runtime.Fragment, {
+                children: [
+                  /* @__PURE__ */ jsx_runtime.jsx("span", {
+                    className: "dsh-fleet-kv-k",
+                    children: "Head"
+                  }),
+                  /* @__PURE__ */ jsx_runtime.jsx("span", {
+                    className: "dsh-fleet-kv-v",
+                    style: { fontFamily: "var(--fleet-mono)", fontSize: 11 },
+                    children: checks.headRevision
+                  })
+                ]
+              }),
+              checks.durationMs !== null && /* @__PURE__ */ jsx_runtime.jsxs(jsx_runtime.Fragment, {
+                children: [
+                  /* @__PURE__ */ jsx_runtime.jsx("span", {
+                    className: "dsh-fleet-kv-k",
+                    children: "耗时"
+                  }),
+                  /* @__PURE__ */ jsx_runtime.jsx("span", {
+                    className: "dsh-fleet-kv-v dsh-fleet-num",
+                    children: formatElapsed(checks.durationMs)
+                  })
+                ]
+              })
+            ]
+          }),
+          checks.steps.length > 0 ? /* @__PURE__ */ jsx_runtime.jsx("div", {
+            style: { display: "flex", flexDirection: "column", gap: 5 },
+            children: checks.steps.map((step, i) => /* @__PURE__ */ jsx_runtime.jsxs("div", {
+              className: "dsh-fleet-check-step",
+              children: [
+                /* @__PURE__ */ jsx_runtime.jsxs("div", {
+                  style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 },
+                  children: [
+                    /* @__PURE__ */ jsx_runtime.jsxs("strong", {
+                      children: [
+                        STEP_ICONS[step.status] ?? "·",
+                        " ",
+                        step.name
+                      ]
+                    }),
+                    /* @__PURE__ */ jsx_runtime.jsxs("span", {
+                      className: "dsh-fleet-row-time dsh-fleet-num",
+                      children: [
+                        step.durationMs,
+                        " ms"
+                      ]
+                    })
+                  ]
+                }),
+                step.summary && /* @__PURE__ */ jsx_runtime.jsx("span", {
+                  style: { fontSize: 11, color: "var(--fleet-text-2)" },
+                  children: step.summary
+                })
+              ]
+            }, `${step.name}-${i}`))
+          }) : /* @__PURE__ */ jsx_runtime.jsx("span", {
+            style: { fontSize: 12, color: "var(--fleet-text-3)" },
+            children: "暂无门禁步骤记录"
+          }),
+          checks.failure && /* @__PURE__ */ jsx_runtime.jsxs("div", {
+            children: [
+              /* @__PURE__ */ jsx_runtime.jsxs("div", {
+                style: { fontSize: 11, color: "var(--fleet-c-error)", fontWeight: 560 },
+                children: [
+                  "失败步骤：",
+                  checks.failure.step,
+                  " — ",
+                  checks.failure.reason
+                ]
+              }),
+              checks.failure.excerpt && /* @__PURE__ */ jsx_runtime.jsx("pre", {
+                className: "dsh-fleet-check-excerpt",
+                children: checks.failure.excerpt
+              })
+            ]
+          })
+        ]
+      })
+    ]
+  });
+}
+
+// src/fleet/roster.jsx
+var import_react2 = require("react");
+var jsx_runtime2 = require("react/jsx-runtime");
+var POLICY_LABELS = {
+  all: "写权限：全部",
+  "dsh-only": "写权限：仅 DSH",
+  "read-only": "只读策略"
+};
+var GATE_LABELS2 = {
+  running: "门禁运行中",
+  passed: "门禁通过",
+  failed: "门禁失败",
+  stale: "门禁过期"
+};
+function dotClassFor(pane, now) {
+  if (!pane || pane.agent === null)
+    return "dsh-fleet-dot dsh-fleet-dot--idle";
+  if (pane.status === "blocked")
+    return "dsh-fleet-dot dsh-fleet-dot--blocked";
+  if (pane.status === "working") {
+    return isStalled(pane, now) ? "dsh-fleet-dot dsh-fleet-dot--stalled" : "dsh-fleet-dot dsh-fleet-dot--working";
+  }
+  if (pane.status === "done")
+    return "dsh-fleet-dot dsh-fleet-dot--done";
+  if (pane.status === "idle")
+    return "dsh-fleet-dot dsh-fleet-dot--idle";
+  return "dsh-fleet-dot dsh-fleet-dot--unknown";
+}
+function statusLabelFor(pane, now, seen) {
+  if (!pane || pane.agent === null)
+    return "终端";
+  if (pane.status === "blocked")
+    return "等你处理";
+  if (pane.status === "working")
+    return isStalled(pane, now) ? "停滞 >3m" : "运行中";
+  if (pane.status === "done")
+    return isUnread(pane, seen) ? "已完成 · 未读" : "已完成";
+  if (pane.status === "idle")
+    return "空闲";
+  return "未识别";
+}
+function PaneRow({ pane, selected, now, seen, onSelect }) {
+  const title = pane.title || pane.agent?.display || pane.id;
+  const elapsed = formatElapsed(now - pane.stateSince);
+  const gate = pane.checks?.gate;
+  const label = statusLabelFor(pane, now, seen);
+  const rowClass = [
+    "dsh-fleet-row",
+    selected ? "dsh-fleet-row--selected" : "",
+    pane.status === "blocked" ? "dsh-fleet-row--blocked" : ""
+  ].filter(Boolean).join(" ");
+  return /* @__PURE__ */ jsx_runtime2.jsxs("button", {
+    type: "button",
+    className: rowClass,
+    onClick: () => onSelect(pane.id),
+    "aria-current": selected ? "true" : undefined,
+    "data-fleet-pane-id": pane.id,
+    children: [
+      /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+        className: "dsh-fleet-row-top",
+        children: [
+          /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            className: dotClassFor(pane, now),
+            title: label,
+            "aria-label": label
+          }),
+          /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            className: "dsh-fleet-row-title",
+            title,
+            children: title
+          }),
+          /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            className: "dsh-fleet-row-time dsh-fleet-num",
+            children: elapsed
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+        className: "dsh-fleet-row-meta",
+        children: [
+          pane.agent && /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            className: "dsh-fleet-pill",
+            children: pane.agent.kind
+          }),
+          pane.agent?.name && /* @__PURE__ */ jsx_runtime2.jsxs("span", {
+            children: [
+              "@",
+              pane.agent.name
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            children: pane.workspaceLabel
+          }),
+          gate && gate !== "none" && /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            className: `dsh-fleet-pill dsh-fleet-pill--${gate}`,
+            children: GATE_LABELS2[gate] ?? gate
+          }),
+          !pane.writable && /* @__PURE__ */ jsx_runtime2.jsx("span", {
+            title: pane.writableReason ?? "readonly",
+            children: "只读"
+          })
+        ]
+      }),
+      pane.summary && /* @__PURE__ */ jsx_runtime2.jsx("div", {
+        className: "dsh-fleet-row-summary",
+        title: pane.summary,
+        children: pane.summary
+      })
+    ]
+  });
+}
+function Roster({
+  state,
+  now,
+  seen,
+  selectedId,
+  onSelect,
+  searchInputRef
+}) {
+  const [search, setSearch] = import_react2.useState("");
+  const [workspaceId, setWorkspaceId] = import_react2.useState("all");
+  const [onlyNeedsMe, setOnlyNeedsMe] = import_react2.useState(false);
+  const [idleExpanded, setIdleExpanded] = import_react2.useState(false);
+  const [shellsExpanded, setShellsExpanded] = import_react2.useState(false);
+  const panes = state?.panes ?? [];
+  const workspaces = state?.workspaces ?? [];
+  const policyWrite = state?.policy?.write ?? "read-only";
+  const { groups, shells } = import_react2.useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const filtered = panes.filter((pane) => {
+      if (workspaceId !== "all" && pane.workspaceId !== workspaceId)
+        return false;
+      if (query) {
+        const hay = [
+          pane.id,
+          pane.title,
+          pane.cwd,
+          pane.workspaceLabel,
+          pane.summary,
+          pane.agent?.name,
+          pane.agent?.kind,
+          pane.agent?.display
+        ].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(query))
+          return false;
+      }
+      return true;
+    });
+    const sorted = sortByAttention(filtered, { now, seen });
+    const bucket = {
+      blocked: [],
+      unread: [],
+      stalled: [],
+      working: [],
+      unknown: [],
+      idle: [],
+      shells: []
+    };
+    for (const pane of sorted) {
+      const g = attentionGroup(pane, { now, seen });
+      if (g === ATTENTION_GROUPS.shell) {
+        bucket.shells.push(pane);
+        continue;
+      }
+      if (onlyNeedsMe && g > ATTENTION_GROUPS.stalled)
+        continue;
+      if (g === ATTENTION_GROUPS.blocked)
+        bucket.blocked.push(pane);
+      else if (g === ATTENTION_GROUPS.unread)
+        bucket.unread.push(pane);
+      else if (g === ATTENTION_GROUPS.stalled)
+        bucket.stalled.push(pane);
+      else if (g === ATTENTION_GROUPS.working)
+        bucket.working.push(pane);
+      else if (g === ATTENTION_GROUPS.unknown)
+        bucket.unknown.push(pane);
+      else
+        bucket.idle.push(pane);
+    }
+    return {
+      groups: [
+        { key: "blocked", label: "等你处理", items: bucket.blocked, collapsible: false },
+        { key: "unread", label: "已完成 · 未读", items: bucket.unread, collapsible: false },
+        { key: "stalled", label: "停滞 >3m", items: bucket.stalled, collapsible: false },
+        { key: "working", label: "运行中", items: bucket.working, collapsible: false },
+        { key: "unknown", label: "未识别", items: bucket.unknown, collapsible: false },
+        { key: "idle", label: "空闲 / 已读", items: bucket.idle, collapsible: true }
+      ],
+      shells: bucket.shells
+    };
+  }, [panes, workspaceId, search, onlyNeedsMe, now, seen]);
+  const selectedInIdle = groups.find((g) => g.key === "idle")?.items.some((p) => p.id === selectedId) ?? false;
+  const showIdle = idleExpanded || selectedInIdle || search.trim().length > 0;
+  return /* @__PURE__ */ jsx_runtime2.jsxs("aside", {
+    className: "dsh-fleet-roster",
+    "aria-label": "Agent 名册",
+    children: [
+      /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+        className: "dsh-fleet-roster-controls",
+        children: [
+          /* @__PURE__ */ jsx_runtime2.jsx("input", {
+            ref: searchInputRef,
+            type: "search",
+            className: "dsh-fleet-search",
+            value: search,
+            onChange: (e) => setSearch(e.target.value),
+            placeholder: "搜索 agent / 目录 / 标题… ( / )",
+            "aria-label": "搜索 agent"
+          }),
+          /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+            className: "dsh-fleet-filter-row",
+            children: [
+              /* @__PURE__ */ jsx_runtime2.jsxs("select", {
+                className: "dsh-fleet-select",
+                value: workspaceId,
+                onChange: (e) => setWorkspaceId(e.target.value),
+                "aria-label": "按工作区筛选",
+                children: [
+                  /* @__PURE__ */ jsx_runtime2.jsxs("option", {
+                    value: "all",
+                    children: [
+                      "全部工作区 (",
+                      workspaces.length,
+                      ")"
+                    ]
+                  }),
+                  workspaces.map((ws) => /* @__PURE__ */ jsx_runtime2.jsxs("option", {
+                    value: ws.id,
+                    children: [
+                      ws.label,
+                      " (",
+                      ws.paneCount,
+                      ")"
+                    ]
+                  }, ws.id))
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime2.jsx("button", {
+                type: "button",
+                className: `dsh-fleet-btn dsh-fleet-btn--sm ${onlyNeedsMe ? "dsh-fleet-btn--active" : ""}`,
+                onClick: () => setOnlyNeedsMe((v) => !v),
+                "aria-pressed": onlyNeedsMe,
+                children: "仅看需要我"
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+            className: "dsh-fleet-filter-row",
+            children: [
+              /* @__PURE__ */ jsx_runtime2.jsx("span", {
+                className: "dsh-fleet-pill",
+                title: `policy.write = ${policyWrite}`,
+                children: POLICY_LABELS[policyWrite] ?? policyWrite
+              }),
+              /* @__PURE__ */ jsx_runtime2.jsxs("span", {
+                className: "dsh-fleet-row-time dsh-fleet-num",
+                children: [
+                  state?.counts?.agents ?? 0,
+                  " bots"
+                ]
+              })
+            ]
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+        className: "dsh-fleet-roster-list",
+        children: [
+          groups.map((group) => {
+            if (group.items.length === 0)
+              return null;
+            if (group.collapsible) {
+              return /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+                className: "dsh-fleet-group",
+                children: [
+                  /* @__PURE__ */ jsx_runtime2.jsxs("button", {
+                    type: "button",
+                    className: "dsh-fleet-group-toggle",
+                    onClick: () => setIdleExpanded((v) => !v),
+                    "aria-expanded": showIdle,
+                    children: [
+                      /* @__PURE__ */ jsx_runtime2.jsxs("span", {
+                        children: [
+                          showIdle ? "▾" : "▸",
+                          " ",
+                          group.label
+                        ]
+                      }),
+                      /* @__PURE__ */ jsx_runtime2.jsx("span", {
+                        className: "dsh-fleet-num",
+                        children: group.items.length
+                      })
+                    ]
+                  }),
+                  showIdle && group.items.map((pane) => /* @__PURE__ */ jsx_runtime2.jsx(PaneRow, {
+                    pane,
+                    selected: pane.id === selectedId,
+                    now,
+                    seen,
+                    onSelect
+                  }, pane.id))
+                ]
+              }, group.key);
+            }
+            return /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+              className: "dsh-fleet-group",
+              children: [
+                /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+                  className: "dsh-fleet-group-header",
+                  children: [
+                    /* @__PURE__ */ jsx_runtime2.jsx("span", {
+                      children: group.label
+                    }),
+                    /* @__PURE__ */ jsx_runtime2.jsx("span", {
+                      className: "dsh-fleet-num",
+                      children: group.items.length
+                    })
+                  ]
+                }),
+                group.items.map((pane) => /* @__PURE__ */ jsx_runtime2.jsx(PaneRow, {
+                  pane,
+                  selected: pane.id === selectedId,
+                  now,
+                  seen,
+                  onSelect
+                }, pane.id))
+              ]
+            }, group.key);
+          }),
+          groups.every((g) => g.items.length === 0) && /* @__PURE__ */ jsx_runtime2.jsx("div", {
+            className: "dsh-fleet-empty",
+            children: /* @__PURE__ */ jsx_runtime2.jsx("span", {
+              children: onlyNeedsMe ? "当前没有需要你处理的 Agent" : "没有匹配的 Agent"
+            })
+          })
+        ]
+      }),
+      shells.length > 0 && /* @__PURE__ */ jsx_runtime2.jsxs("div", {
+        className: "dsh-fleet-shells-footer",
+        children: [
+          /* @__PURE__ */ jsx_runtime2.jsxs("button", {
+            type: "button",
+            className: "dsh-fleet-group-toggle",
+            onClick: () => setShellsExpanded((v) => !v),
+            "aria-expanded": shellsExpanded,
+            children: [
+              /* @__PURE__ */ jsx_runtime2.jsxs("span", {
+                children: [
+                  shellsExpanded ? "▾" : "▸",
+                  " 普通终端（只读）"
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime2.jsx("span", {
+                className: "dsh-fleet-num",
+                children: shells.length
+              })
+            ]
+          }),
+          shellsExpanded && shells.map((pane) => /* @__PURE__ */ jsx_runtime2.jsx(PaneRow, {
+            pane,
+            selected: pane.id === selectedId,
+            now,
+            seen,
+            onSelect
+          }, pane.id))
+        ]
+      })
+    ]
+  });
+}
+
+// src/fleet/stage.jsx
+var import_react3 = require("react");
+
+// src/fleet/ansi.js
+var STANDARD_COLORS = [
+  "var(--dsw-ansi-black, #1c1c1e)",
+  "var(--dsw-ansi-red, #ff453a)",
+  "var(--dsw-ansi-green, #30d158)",
+  "var(--dsw-ansi-yellow, #ffd60a)",
+  "var(--dsw-ansi-blue, #0a84ff)",
+  "var(--dsw-ansi-magenta, #bf5af2)",
+  "var(--dsw-ansi-cyan, #64d2ff)",
+  "var(--dsw-ansi-white, #e5e5ea)"
+];
+var BRIGHT_COLORS = [
+  "var(--dsw-ansi-bright-black, #636366)",
+  "var(--dsw-ansi-bright-red, #ff6961)",
+  "var(--dsw-ansi-bright-green, #4cd964)",
+  "var(--dsw-ansi-bright-yellow, #ffe620)",
+  "var(--dsw-ansi-bright-blue, #409cff)",
+  "var(--dsw-ansi-bright-magenta, #da8fff)",
+  "var(--dsw-ansi-bright-cyan, #70d7ff)",
+  "var(--dsw-ansi-bright-white, #ffffff)"
+];
+var CUBE_LEVELS = [0, 95, 135, 175, 215, 255];
+function color256(index) {
+  if (!Number.isInteger(index) || index < 0 || index > 255)
+    return null;
+  if (index < 8)
+    return STANDARD_COLORS[index];
+  if (index < 16)
+    return BRIGHT_COLORS[index - 8];
+  if (index < 232) {
+    const n = index - 16;
+    const r = CUBE_LEVELS[Math.floor(n / 36)];
+    const g = CUBE_LEVELS[Math.floor(n % 36 / 6)];
+    const b = CUBE_LEVELS[n % 6];
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  const gray = 8 + (index - 232) * 10;
+  return `rgb(${gray}, ${gray}, ${gray})`;
+}
+function clampByte(n) {
+  if (!Number.isFinite(n))
+    return 0;
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+function emptyState() {
+  return {
+    bold: false,
+    dim: false,
+    italic: false,
+    underline: false,
+    inverse: false,
+    fg: null,
+    bg: null
+  };
+}
+function cloneState(s) {
+  return {
+    bold: s.bold,
+    dim: s.dim,
+    italic: s.italic,
+    underline: s.underline,
+    inverse: s.inverse,
+    fg: s.fg,
+    bg: s.bg
+  };
+}
+function applySgr(state, rawParams) {
+  const parts = rawParams === "" ? [0] : rawParams.split(";").map((p) => p === "" ? 0 : Number.parseInt(p, 10));
+  for (let i = 0;i < parts.length; i++) {
+    const code = parts[i];
+    if (!Number.isFinite(code))
+      continue;
+    if (code === 0) {
+      Object.assign(state, emptyState());
+    } else if (code === 1) {
+      state.bold = true;
+    } else if (code === 2) {
+      state.dim = true;
+    } else if (code === 3) {
+      state.italic = true;
+    } else if (code === 4) {
+      state.underline = true;
+    } else if (code === 7) {
+      state.inverse = true;
+    } else if (code === 22) {
+      state.bold = false;
+      state.dim = false;
+    } else if (code === 23) {
+      state.italic = false;
+    } else if (code === 24) {
+      state.underline = false;
+    } else if (code === 27) {
+      state.inverse = false;
+    } else if (code >= 30 && code <= 37) {
+      state.fg = STANDARD_COLORS[code - 30];
+    } else if (code === 39) {
+      state.fg = null;
+    } else if (code >= 40 && code <= 47) {
+      state.bg = STANDARD_COLORS[code - 40];
+    } else if (code === 49) {
+      state.bg = null;
+    } else if (code >= 90 && code <= 97) {
+      state.fg = BRIGHT_COLORS[code - 90];
+    } else if (code >= 100 && code <= 107) {
+      state.bg = BRIGHT_COLORS[code - 100];
+    } else if (code === 38 || code === 48) {
+      const target = code === 38 ? "fg" : "bg";
+      const mode = parts[i + 1];
+      if (mode === 5 && i + 2 < parts.length) {
+        state[target] = color256(parts[i + 2]);
+        i += 2;
+      } else if (mode === 2 && i + 4 < parts.length) {
+        const r = clampByte(parts[i + 2]);
+        const g = clampByte(parts[i + 3]);
+        const b = clampByte(parts[i + 4]);
+        state[target] = `rgb(${r}, ${g}, ${b})`;
+        i += 4;
+      }
+    }
+  }
+}
+var ANSI_TOKEN_RE = /\u001b\[([0-9;:<=>?]*)([ -/]*)([@-~])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
+function parseAnsi(input) {
+  const source = typeof input === "string" ? input.replace(/\r\n/g, `
+`) : "";
+  const lines = [[]];
+  const state = emptyState();
+  const pushText = (chunk) => {
+    if (!chunk)
+      return;
+    const parts = chunk.split(`
+`);
+    for (let i = 0;i < parts.length; i++) {
+      if (i > 0)
+        lines.push([]);
+      const segment = parts[i];
+      if (segment.length > 0) {
+        lines[lines.length - 1].push({ text: segment, style: cloneState(state) });
+      }
+    }
+  };
+  let lastIndex = 0;
+  ANSI_TOKEN_RE.lastIndex = 0;
+  let match;
+  while ((match = ANSI_TOKEN_RE.exec(source)) !== null) {
+    if (match.index > lastIndex) {
+      pushText(source.slice(lastIndex, match.index));
+    }
+    const params = match[1];
+    const intermediates = match[2];
+    const finalByte = match[3];
+    if (finalByte === "m" && intermediates === "" && /^[0-9;]*$/.test(params)) {
+      applySgr(state, params);
+    }
+    lastIndex = ANSI_TOKEN_RE.lastIndex;
+  }
+  if (lastIndex < source.length) {
+    pushText(source.slice(lastIndex));
+  }
+  return lines;
+}
+function stripAnsi(input) {
+  if (typeof input !== "string")
+    return "";
+  return input.replace(/\r\n/g, `
+`).replace(ANSI_TOKEN_RE, "");
+}
+function spanToReactStyle(style) {
+  if (!style)
+    return;
+  const out = {};
+  let hasAny = false;
+  if (style.bold) {
+    out.fontWeight = 600;
+    hasAny = true;
+  }
+  if (style.dim) {
+    out.opacity = 0.62;
+    hasAny = true;
+  }
+  if (style.italic) {
+    out.fontStyle = "italic";
+    hasAny = true;
+  }
+  if (style.underline) {
+    out.textDecoration = "underline";
+    hasAny = true;
+  }
+  if (style.inverse) {
+    out.color = style.bg ?? "var(--dsw-alias-bg, #141416)";
+    out.backgroundColor = style.fg ?? "var(--dsw-alias-text-primary, #f2f2f7)";
+    hasAny = true;
+  } else {
+    if (style.fg) {
+      out.color = style.fg;
+      hasAny = true;
+    }
+    if (style.bg) {
+      out.backgroundColor = style.bg;
+      hasAny = true;
+    }
+  }
+  return hasAny ? out : undefined;
+}
+
+// src/fleet/stage.jsx
+var jsx_runtime3 = require("react/jsx-runtime");
+var WRITABLE_REASON_TEXT = {
+  "not-an-agent": "该面板为普通终端（非 Agent），仅支持只读查看",
+  "policy-read-only": "当前写策略为只读（read-only），面板不提供输入框",
+  "policy-dsh-only": "当前写策略仅允许写入 DSH 创建的 Agent，该外部会话只读",
+  offline: "herdr 已断开，当前处于只读离线状态"
+};
+var FRAME_REASON_TEXT = {
+  "no-transcript": "未找到该 Agent 的会话记录文件",
+  "not-yet": "Agent 刚启动，暂未产生对话记录",
+  "unsupported-agent": "当前 Agent 类型暂不支持对话记录解析",
+  unreadable: "会话记录文件无法读取或解析失败"
+};
+var APPROVAL_KEYS = [
+  { key: "1", label: "1" },
+  { key: "2", label: "2" },
+  { key: "3", label: "3" },
+  { key: "y", label: "y" },
+  { key: "n", label: "n" },
+  { key: "enter", label: "↵ Enter" },
+  { key: "esc", label: "Esc" }
+];
+var SCREEN_KEYBAR = [
+  { key: "enter", label: "↵" },
+  { key: "esc", label: "Esc" },
+  { key: "tab", label: "Tab" },
+  { key: "shift+tab", label: "⇧Tab" },
+  { key: "up", label: "↑" },
+  { key: "down", label: "↓" },
+  { key: "left", label: "←" },
+  { key: "right", label: "→" },
+  { key: "space", label: "Space" },
+  { key: "backspace", label: "⌫" },
+  { key: "ctrl+c", label: "Ctrl+C" },
+  { key: "ctrl+d", label: "Ctrl+D" },
+  { key: "y", label: "y" },
+  { key: "n", label: "n" },
+  { key: "1", label: "1" },
+  { key: "2", label: "2" },
+  { key: "3", label: "3" },
+  { key: "4", label: "4" }
+];
+function renderInline(text) {
+  const tokens = [];
+  const re = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  let last = 0;
+  let m;
+  let k = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last)
+      tokens.push(text.slice(last, m.index));
+    const seg = m[0];
+    if (seg.startsWith("`")) {
+      tokens.push(/* @__PURE__ */ jsx_runtime3.jsx("code", {
+        children: seg.slice(1, -1)
+      }, k++));
+    } else if (seg.startsWith("**")) {
+      tokens.push(/* @__PURE__ */ jsx_runtime3.jsx("strong", {
+        children: seg.slice(2, -2)
+      }, k++));
+    } else if (seg.startsWith("[")) {
+      const split = seg.indexOf("](");
+      const label = seg.slice(1, split);
+      const href = seg.slice(split + 2, -1);
+      tokens.push(/* @__PURE__ */ jsx_runtime3.jsx("a", {
+        href,
+        target: "_blank",
+        rel: "noreferrer noopener",
+        children: label
+      }, k++));
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length)
+    tokens.push(text.slice(last));
+  return tokens;
+}
+function MarkdownBlock({ text }) {
+  const blocks = import_react3.useMemo(() => {
+    const lines = String(text ?? "").split(`
+`);
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.startsWith("```")) {
+        const lang = line.slice(3).trim();
+        const codeLines = [];
+        i += 1;
+        while (i < lines.length && !lines[i].startsWith("```")) {
+          codeLines.push(lines[i]);
+          i += 1;
+        }
+        i += 1;
+        out.push({ type: "code", lang, content: codeLines.join(`
+`) });
+        continue;
+      }
+      if (/^#{1,3}\s+/.test(line)) {
+        const level = line.match(/^#+/)[0].length;
+        out.push({ type: "heading", level, content: line.replace(/^#{1,3}\s+/, "") });
+        i += 1;
+        continue;
+      }
+      if (line.startsWith("> ")) {
+        const quoteLines = [];
+        while (i < lines.length && lines[i].startsWith("> ")) {
+          quoteLines.push(lines[i].slice(2));
+          i += 1;
+        }
+        out.push({ type: "quote", content: quoteLines.join(`
+`) });
+        continue;
+      }
+      if (line.includes("|") && i + 1 < lines.length && /^\|?[\s:-]+\|/.test(lines[i + 1])) {
+        const splitRow = (r) => r.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+        const header = splitRow(line);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+          rows.push(splitRow(lines[i]));
+          i += 1;
+        }
+        out.push({ type: "table", header, rows });
+        continue;
+      }
+      if (/^[-*]\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+          items.push(lines[i].replace(/^[-*]\s+/, ""));
+          i += 1;
+        }
+        out.push({ type: "ul", items });
+        continue;
+      }
+      if (/^\d+\.\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+          items.push(lines[i].replace(/^\d+\.\s+/, ""));
+          i += 1;
+        }
+        out.push({ type: "ol", items });
+        continue;
+      }
+      if (line.trim() === "") {
+        i += 1;
+        continue;
+      }
+      const para = [];
+      while (i < lines.length && lines[i].trim() !== "" && !lines[i].startsWith("```") && !/^#{1,3}\s+/.test(lines[i]) && !lines[i].startsWith("> ") && !/^[-*]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i])) {
+        para.push(lines[i]);
+        i += 1;
+      }
+      out.push({ type: "p", content: para.join(`
+`) });
+    }
+    return out;
+  }, [text]);
+  return /* @__PURE__ */ jsx_runtime3.jsx("div", {
+    className: "dsh-fleet-md",
+    children: blocks.map((b, idx) => {
+      if (b.type === "code") {
+        return /* @__PURE__ */ jsx_runtime3.jsx("pre", {
+          "data-lang": b.lang || undefined,
+          children: /* @__PURE__ */ jsx_runtime3.jsx("code", {
+            children: b.content
+          })
+        }, idx);
+      }
+      if (b.type === "heading") {
+        const Tag = b.level === 1 ? "h1" : b.level === 2 ? "h2" : "h3";
+        return /* @__PURE__ */ jsx_runtime3.jsx(Tag, {
+          children: renderInline(b.content)
+        }, idx);
+      }
+      if (b.type === "quote") {
+        return /* @__PURE__ */ jsx_runtime3.jsx("blockquote", {
+          children: renderInline(b.content)
+        }, idx);
+      }
+      if (b.type === "table") {
+        return /* @__PURE__ */ jsx_runtime3.jsxs("table", {
+          children: [
+            /* @__PURE__ */ jsx_runtime3.jsx("thead", {
+              children: /* @__PURE__ */ jsx_runtime3.jsx("tr", {
+                children: b.header.map((h, hi) => /* @__PURE__ */ jsx_runtime3.jsx("th", {
+                  children: renderInline(h)
+                }, hi))
+              })
+            }),
+            /* @__PURE__ */ jsx_runtime3.jsx("tbody", {
+              children: b.rows.map((r, ri) => /* @__PURE__ */ jsx_runtime3.jsx("tr", {
+                children: r.map((c, ci) => /* @__PURE__ */ jsx_runtime3.jsx("td", {
+                  children: renderInline(c)
+                }, ci))
+              }, ri))
+            })
+          ]
+        }, idx);
+      }
+      if (b.type === "ul") {
+        return /* @__PURE__ */ jsx_runtime3.jsx("ul", {
+          children: b.items.map((item, ii) => /* @__PURE__ */ jsx_runtime3.jsx("li", {
+            children: renderInline(item)
+          }, ii))
+        }, idx);
+      }
+      if (b.type === "ol") {
+        return /* @__PURE__ */ jsx_runtime3.jsx("ol", {
+          children: b.items.map((item, ii) => /* @__PURE__ */ jsx_runtime3.jsx("li", {
+            children: renderInline(item)
+          }, ii))
+        }, idx);
+      }
+      return /* @__PURE__ */ jsx_runtime3.jsx("p", {
+        children: renderInline(b.content)
+      }, idx);
+    })
+  });
+}
+function FrameItem({ frame, now }) {
+  if (frame.kind === "session") {
+    return /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+      className: "dsh-fleet-frame-session",
+      children: [
+        /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+          children: [
+            "session ",
+            frame.sessionId
+          ]
+        }),
+        /* @__PURE__ */ jsx_runtime3.jsx("span", {
+          children: "·"
+        }),
+        /* @__PURE__ */ jsx_runtime3.jsx("span", {
+          children: frame.cwd
+        })
+      ]
+    });
+  }
+  if (frame.kind === "text") {
+    const isUser = frame.role === "user";
+    return /* @__PURE__ */ jsx_runtime3.jsxs("article", {
+      className: `dsh-fleet-frame-text ${isUser ? "dsh-fleet-frame-text--user" : ""}`,
+      children: [
+        /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+          className: "dsh-fleet-frame-role",
+          children: [
+            /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              children: isUser ? "你" : frame.role === "system" ? "系统" : "Agent"
+            }),
+            typeof frame.at === "number" && /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+              className: "dsh-fleet-num",
+              children: [
+                formatElapsed(now - frame.at),
+                " 前"
+              ]
+            })
+          ]
+        }),
+        /* @__PURE__ */ jsx_runtime3.jsx(MarkdownBlock, {
+          text: frame.text
+        })
+      ]
+    });
+  }
+  if (frame.kind === "reasoning") {
+    return /* @__PURE__ */ jsx_runtime3.jsxs("details", {
+      className: "dsh-fleet-frame-reasoning",
+      children: [
+        /* @__PURE__ */ jsx_runtime3.jsx("summary", {
+          children: "思考过程"
+        }),
+        /* @__PURE__ */ jsx_runtime3.jsx("div", {
+          style: { marginTop: 6 },
+          children: /* @__PURE__ */ jsx_runtime3.jsx(MarkdownBlock, {
+            text: frame.text
+          })
+        })
+      ]
+    });
+  }
+  if (frame.kind === "work") {
+    return /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+      className: "dsh-fleet-frame-work",
+      children: [
+        /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+          className: "dsh-fleet-work-head",
+          children: [
+            /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              children: frame.summary || "工具执行"
+            }),
+            typeof frame.tokens === "number" && /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+              className: "dsh-fleet-row-time dsh-fleet-num",
+              children: [
+                frame.tokens.toLocaleString(),
+                " tok"
+              ]
+            })
+          ]
+        }),
+        frame.rows.map((row, idx) => /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+          className: "dsh-fleet-work-row",
+          children: [
+            /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              className: "dsh-fleet-work-verb",
+              children: row.verb
+            }),
+            /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              className: "dsh-fleet-work-obj",
+              title: row.object,
+              children: row.object
+            }),
+            /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              style: {
+                fontSize: 11,
+                color: row.outcome === "ok" ? "var(--fleet-c-success)" : row.outcome === "error" ? "var(--fleet-c-error)" : "var(--fleet-c-working)"
+              },
+              children: row.outcome === "ok" ? "ok" : row.outcome === "error" ? "error" : "运行中…"
+            }),
+            /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              className: "dsh-fleet-row-time dsh-fleet-num",
+              style: { textAlign: "right" },
+              children: typeof row.ms === "number" ? `${row.ms}ms` : "—"
+            })
+          ]
+        }, idx))
+      ]
+    });
+  }
+  if (frame.kind === "final") {
+    return /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+      className: "dsh-fleet-frame-final",
+      children: [
+        /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+          className: "dsh-fleet-frame-role",
+          style: { marginBottom: 4 },
+          children: [
+            /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+              style: { color: "var(--fleet-c-success)" },
+              children: [
+                "回合完成 · ",
+                frame.reason
+              ]
+            }),
+            typeof frame.ms === "number" && /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              className: "dsh-fleet-num",
+              children: formatElapsed(frame.ms)
+            })
+          ]
+        }),
+        /* @__PURE__ */ jsx_runtime3.jsx(MarkdownBlock, {
+          text: frame.text
+        })
+      ]
+    });
+  }
+  return null;
+}
+function AnsiScreen({ text }) {
+  const lines = import_react3.useMemo(() => parseAnsi(text), [text]);
+  return /* @__PURE__ */ jsx_runtime3.jsx("pre", {
+    className: "dsh-fleet-screen-pre",
+    children: lines.map((spans, li) => /* @__PURE__ */ jsx_runtime3.jsx("div", {
+      children: spans.length === 0 ? " " : spans.map((span, si) => /* @__PURE__ */ jsx_runtime3.jsx("span", {
+        style: spanToReactStyle(span.style),
+        children: span.text
+      }, si))
+    }, li))
+  });
+}
+function formatHandoffContext(pane, frames) {
+  const recent = (frames ?? []).filter((f) => f.kind === "text" || f.kind === "final").slice(-20);
+  const lines = [
+    `<外部会话上下文 pane="${pane.id}" agent="${pane.agent?.kind ?? "shell"}" cwd="${pane.cwd}">`
+  ];
+  for (const f of recent) {
+    const role = f.kind === "final" ? "assistant" : f.role;
+    lines.push(`[${role}] ${f.text}`);
+  }
+  lines.push("</外部会话上下文>");
+  const joined = lines.join(`
+`);
+  return joined.length > 8000 ? `${joined.slice(0, 7960)}
+…（已按 8k 字符上限截断）
+</外部会话上下文>` : joined;
+}
+function Stage({
+  pane,
+  now,
+  seen,
+  activeTab,
+  onTabChange,
+  framesData,
+  framesLoading,
+  onLoadEarlier,
+  screenData,
+  screenLoading,
+  onRefreshScreen,
+  onAct,
+  onHandoffContinue,
+  inspectorOpen,
+  onToggleInspector
+}) {
+  const [promptText, setPromptText] = import_react3.useState("");
+  const [answerText, setAnswerText] = import_react3.useState("");
+  const [answerEnter, setAnswerEnter] = import_react3.useState(true);
+  const [sending, setSending] = import_react3.useState(false);
+  const [actionNotice, setActionNotice] = import_react3.useState(null);
+  const [pendingConfirm, setPendingConfirm] = import_react3.useState(null);
+  const [copied, setCopied] = import_react3.useState(false);
+  import_react3.useEffect(() => {
+    setActionNotice(null);
+    setPendingConfirm(null);
+    setCopied(false);
+  }, [pane?.id]);
+  if (!pane) {
+    return /* @__PURE__ */ jsx_runtime3.jsx("main", {
+      className: "dsh-fleet-stage",
+      children: /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+        className: "dsh-fleet-empty",
+        children: [
+          /* @__PURE__ */ jsx_runtime3.jsx("strong", {
+            children: "未选择面板"
+          }),
+          /* @__PURE__ */ jsx_runtime3.jsx("span", {
+            children: "从左侧名册选择一个 Agent，或按 ⌘⌥A 跳到下一个需要你处理的面板。"
+          })
+        ]
+      })
+    });
+  }
+  const label = statusLabelFor(pane, now, seen);
+  const checks = pane.checks ?? { gate: "none", steps: [], failure: null, durationMs: null, baseRevision: null, headRevision: null };
+  async function dispatchAct(req) {
+    setSending(true);
+    setActionNotice(null);
+    try {
+      const res = await onAct(req);
+      if (!res?.ok) {
+        if (res?.reason === "screen-changed") {
+          await onRefreshScreen();
+          setActionNotice({
+            kind: "warn",
+            text: `屏幕内容已变化（当前版本 #${res.detail?.revision ?? "?"}），已刷新最新画面，请确认后再重新操作（不会自动重试）。`
+          });
+        } else {
+          setActionNotice({
+            kind: "error",
+            text: res?.message || `操作被拒绝：${res?.reason ?? "unknown"}`
+          });
+        }
+      }
+      return res;
+    } finally {
+      setSending(false);
+    }
+  }
+  async function handleSendPrompt(e) {
+    e?.preventDefault();
+    const text = promptText.trim();
+    if (!text || sending)
+      return;
+    const res = await dispatchAct({ verb: "prompt", pane: pane.id, text });
+    if (res?.ok)
+      setPromptText("");
+  }
+  async function handleSendAnswer(e) {
+    e?.preventDefault();
+    const text = answerText.trim();
+    if (!text || sending || typeof screenData?.revision !== "number")
+      return;
+    const res = await dispatchAct({
+      verb: "answer",
+      pane: pane.id,
+      text,
+      enter: answerEnter,
+      expectRevision: screenData.revision
+    });
+    if (res?.ok)
+      setAnswerText("");
+  }
+  async function handleSendKey(key) {
+    if (sending || typeof screenData?.revision !== "number")
+      return;
+    await dispatchAct({
+      verb: "keys",
+      pane: pane.id,
+      keys: [key],
+      expectRevision: screenData.revision
+    });
+  }
+  async function handleConfirmedDanger(verb) {
+    setPendingConfirm(null);
+    await dispatchAct({ verb, pane: pane.id, confirm: true });
+  }
+  async function handleCopyContext() {
+    const text = formatHandoffContext(pane, framesData?.frames ?? []);
+    try {
+      await globalThis.navigator?.clipboard?.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setActionNotice({ kind: "info", text: "无法访问剪贴板，请手动复制上下文。" });
+    }
+  }
+  const approvalExcerpt = import_react3.useMemo(() => {
+    if (!screenData?.text)
+      return pane.summary || "等待读取最新屏幕…";
+    const plain = stripAnsi(screenData.text).trim();
+    const lines = plain.split(`
+`).filter((l) => l.trim() !== "");
+    return lines.slice(-10).join(`
+`) || pane.summary;
+  }, [screenData?.text, pane.summary]);
+  return /* @__PURE__ */ jsx_runtime3.jsxs("main", {
+    className: "dsh-fleet-stage",
+    "data-pane-readonly": !pane.writable ? "" : undefined,
+    children: [
+      /* @__PURE__ */ jsx_runtime3.jsxs("header", {
+        className: "dsh-fleet-stage-header",
+        children: [
+          /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+            className: "dsh-fleet-stage-title-wrap",
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                className: "dsh-fleet-stage-title",
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                    className: dotClassFor(pane, now),
+                    title: label
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                    className: "dsh-fleet-stage-title-text",
+                    title: pane.title,
+                    children: pane.title || pane.id
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                    className: "dsh-fleet-pill",
+                    children: label
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                    className: "dsh-fleet-row-time dsh-fleet-num",
+                    children: formatElapsed(now - pane.stateSince)
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                className: "dsh-fleet-stage-sub",
+                children: [
+                  pane.workspaceLabel,
+                  " / ",
+                  pane.tabLabel,
+                  " · ",
+                  pane.cwd
+                ]
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+            className: "dsh-fleet-stage-actions",
+            children: [
+              pane.writable && (pane.status === "working" || pane.status === "blocked") && /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                disabled: sending,
+                onClick: () => dispatchAct({ verb: "interrupt", pane: pane.id }),
+                children: "中断"
+              }),
+              pane.writable && /* @__PURE__ */ jsx_runtime3.jsxs(jsx_runtime3.Fragment, {
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    disabled: sending,
+                    onClick: () => setPendingConfirm("restart"),
+                    children: "重启"
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm dsh-fleet-btn--danger",
+                    disabled: sending,
+                    onClick: () => setPendingConfirm("close"),
+                    children: "关闭"
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                type: "button",
+                className: `dsh-fleet-btn dsh-fleet-btn--sm ${inspectorOpen ? "dsh-fleet-btn--active" : ""}`,
+                onClick: onToggleInspector,
+                children: "详情"
+              })
+            ]
+          })
+        ]
+      }),
+      pendingConfirm && /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+        className: "dsh-fleet-confirm-bar",
+        role: "alertdialog",
+        "aria-label": "确认危险操作",
+        children: [
+          /* @__PURE__ */ jsx_runtime3.jsx("span", {
+            children: pendingConfirm === "restart" ? `确认重新拉起 ${pane.title || pane.id}？（若进程仍在运行，请先中断）` : `确认关闭面板 ${pane.title || pane.id}？此操作不可撤销。`
+          }),
+          /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+            style: { display: "flex", gap: 6 },
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                onClick: () => setPendingConfirm(null),
+                children: "取消"
+              }),
+              /* @__PURE__ */ jsx_runtime3.jsxs("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--sm dsh-fleet-btn--danger",
+                disabled: sending,
+                onClick: () => handleConfirmedDanger(pendingConfirm),
+                children: [
+                  "确认",
+                  pendingConfirm === "restart" ? "重启" : "关闭"
+                ]
+              })
+            ]
+          })
+        ]
+      }),
+      actionNotice && /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+        className: `dsh-fleet-banner dsh-fleet-banner--${actionNotice.kind}`,
+        role: "alert",
+        children: [
+          /* @__PURE__ */ jsx_runtime3.jsx("span", {
+            children: actionNotice.text
+          }),
+          /* @__PURE__ */ jsx_runtime3.jsx("button", {
+            type: "button",
+            className: "dsh-fleet-btn dsh-fleet-btn--sm",
+            onClick: () => setActionNotice(null),
+            children: "知道了"
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime3.jsxs("nav", {
+        className: "dsh-fleet-tabs",
+        role: "tablist",
+        children: [
+          /* @__PURE__ */ jsx_runtime3.jsx("button", {
+            type: "button",
+            role: "tab",
+            "aria-selected": activeTab === "transcript",
+            className: `dsh-fleet-tab ${activeTab === "transcript" ? "dsh-fleet-tab--active" : ""}`,
+            onClick: () => onTabChange("transcript"),
+            children: "对话"
+          }),
+          /* @__PURE__ */ jsx_runtime3.jsx("button", {
+            type: "button",
+            role: "tab",
+            "aria-selected": activeTab === "screen",
+            className: `dsh-fleet-tab ${activeTab === "screen" ? "dsh-fleet-tab--active" : ""}`,
+            onClick: () => onTabChange("screen"),
+            children: "实时屏幕"
+          }),
+          /* @__PURE__ */ jsx_runtime3.jsxs("button", {
+            type: "button",
+            role: "tab",
+            "aria-selected": activeTab === "checks",
+            className: `dsh-fleet-tab ${activeTab === "checks" ? "dsh-fleet-tab--active" : ""}`,
+            onClick: () => onTabChange("checks"),
+            children: [
+              "门禁",
+              checks.gate !== "none" && /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                className: `dsh-fleet-pill dsh-fleet-pill--${checks.gate}`,
+                children: checks.gate
+              })
+            ]
+          })
+        ]
+      }),
+      pane.status === "blocked" && /* @__PURE__ */ jsx_runtime3.jsxs("section", {
+        className: "dsh-fleet-approval",
+        "aria-label": "审批快速通道",
+        children: [
+          /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+            className: "dsh-fleet-approval-head",
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                children: "⚠️ 等待你的审批或回答"
+              }),
+              /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                style: { display: "flex", alignItems: "center", gap: 6 },
+                children: [
+                  typeof screenData?.revision === "number" && /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+                    className: "dsh-fleet-row-time dsh-fleet-num",
+                    children: [
+                      "rev #",
+                      screenData.revision
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    onClick: onRefreshScreen,
+                    disabled: screenLoading,
+                    children: "刷新屏幕"
+                  })
+                ]
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime3.jsx("pre", {
+            className: "dsh-fleet-approval-screen",
+            children: approvalExcerpt
+          }),
+          pane.writable ? /* @__PURE__ */ jsx_runtime3.jsxs(jsx_runtime3.Fragment, {
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                className: "dsh-fleet-approval-keys",
+                children: APPROVAL_KEYS.map(({ key, label: btnLabel }) => /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                  type: "button",
+                  className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                  disabled: sending || typeof screenData?.revision !== "number",
+                  onClick: () => handleSendKey(key),
+                  children: btnLabel
+                }, key))
+              }),
+              /* @__PURE__ */ jsx_runtime3.jsxs("form", {
+                className: "dsh-fleet-approval-form",
+                onSubmit: handleSendAnswer,
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("input", {
+                    type: "text",
+                    className: "dsh-fleet-approval-input",
+                    value: answerText,
+                    onChange: (e) => setAnswerText(e.target.value),
+                    placeholder: "输入自由文本回答（绑定当前屏幕 revision）…",
+                    disabled: sending || typeof screenData?.revision !== "number"
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsxs("label", {
+                    style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--fleet-text-2)" },
+                    children: [
+                      /* @__PURE__ */ jsx_runtime3.jsx("input", {
+                        type: "checkbox",
+                        checked: answerEnter,
+                        onChange: (e) => setAnswerEnter(e.target.checked)
+                      }),
+                      "回车"
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "submit",
+                    className: "dsh-fleet-btn dsh-fleet-btn--primary dsh-fleet-btn--sm",
+                    disabled: sending || !answerText.trim() || typeof screenData?.revision !== "number",
+                    children: "回复"
+                  })
+                ]
+              })
+            ]
+          }) : /* @__PURE__ */ jsx_runtime3.jsx("div", {
+            className: "dsh-fleet-readonly-notice",
+            children: /* @__PURE__ */ jsx_runtime3.jsx("span", {
+              children: WRITABLE_REASON_TEXT[pane.writableReason] ?? "当前面板只读"
+            })
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+        className: "dsh-fleet-stage-scroll",
+        children: [
+          activeTab === "transcript" && /* @__PURE__ */ jsx_runtime3.jsxs(jsx_runtime3.Fragment, {
+            children: [
+              framesData?.hasEarlier && /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                style: { display: "flex", justifyContent: "center" },
+                children: /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                  type: "button",
+                  className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                  disabled: framesLoading,
+                  onClick: () => onLoadEarlier(framesData.cursor?.start),
+                  children: framesLoading ? "加载中…" : "加载更早记录"
+                })
+              }),
+              framesData?.partial && /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                className: "dsh-fleet-readonly-notice",
+                children: /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                  children: "会话文件较大，仅展示尾部窗口。"
+                })
+              }),
+              framesData && framesData.source !== "transcript" ? /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                className: "dsh-fleet-empty",
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("strong", {
+                    children: FRAME_REASON_TEXT[framesData.reason] ?? "暂无结构化对话记录"
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+                    children: [
+                      "source: ",
+                      framesData.source,
+                      " · reason: ",
+                      framesData.reason ?? "none"
+                    ]
+                  }),
+                  framesData.source === "screen" && /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--primary",
+                    onClick: () => onTabChange("screen"),
+                    children: "切换到实时屏幕"
+                  })
+                ]
+              }) : /* @__PURE__ */ jsx_runtime3.jsxs(jsx_runtime3.Fragment, {
+                children: [
+                  (framesData?.frames ?? []).map((frame) => /* @__PURE__ */ jsx_runtime3.jsx(FrameItem, {
+                    frame,
+                    now
+                  }, frame.id)),
+                  !framesLoading && (framesData?.frames?.length ?? 0) === 0 && /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                    className: "dsh-fleet-empty",
+                    children: /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                      children: "暂无对话帧"
+                    })
+                  })
+                ]
+              }),
+              (framesData?.unknownFrames ?? 0) > 0 && /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                style: { fontSize: 11, color: "var(--fleet-text-3)", textAlign: "center" },
+                className: "dsh-fleet-num",
+                children: [
+                  "已跳过 ",
+                  framesData.unknownFrames,
+                  " 条未识别条目"
+                ]
+              })
+            ]
+          }),
+          activeTab === "screen" && /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+            className: "dsh-fleet-screen-wrap",
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11, color: "var(--fleet-text-3)" },
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                    className: "dsh-fleet-num",
+                    children: screenData?.ok ? `rev #${screenData.revision} · ${screenData.cols ?? "?"}×${screenData.rows ?? "?"}` : screenData?.message || "等待读取屏幕…"
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    onClick: onRefreshScreen,
+                    disabled: screenLoading,
+                    children: screenLoading ? "刷新中…" : "刷新屏幕"
+                  })
+                ]
+              }),
+              screenData?.ok ? /* @__PURE__ */ jsx_runtime3.jsx(AnsiScreen, {
+                text: screenData.text
+              }) : /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                className: "dsh-fleet-empty",
+                children: /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                  children: screenData?.message || "无法读取实时屏幕"
+                })
+              }),
+              pane.writable && /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                className: "dsh-fleet-keybar",
+                "aria-label": "终端按键条",
+                children: SCREEN_KEYBAR.map(({ key, label: btnLabel }) => /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                  type: "button",
+                  className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                  disabled: sending || !screenData?.ok,
+                  onClick: () => handleSendKey(key),
+                  title: `发送按键 ${key}`,
+                  children: btnLabel
+                }, key))
+              })
+            ]
+          }),
+          activeTab === "checks" && /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+            style: { display: "flex", flexDirection: "column", gap: 10 },
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                style: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsxs("strong", {
+                    children: [
+                      "门禁状态：",
+                      checks.gate
+                    ]
+                  }),
+                  checks.durationMs !== null && /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+                    className: "dsh-fleet-row-time dsh-fleet-num",
+                    children: [
+                      "总耗时 ",
+                      formatElapsed(checks.durationMs)
+                    ]
+                  })
+                ]
+              }),
+              checks.steps.length === 0 ? /* @__PURE__ */ jsx_runtime3.jsx("div", {
+                className: "dsh-fleet-empty",
+                children: /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                  children: "当前面板尚未运行门禁校验。"
+                })
+              }) : checks.steps.map((step, i) => /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                className: "dsh-fleet-check-step",
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                    style: { display: "flex", justifyContent: "space-between" },
+                    children: [
+                      /* @__PURE__ */ jsx_runtime3.jsxs("strong", {
+                        children: [
+                          step.name,
+                          " (",
+                          step.status,
+                          ")"
+                        ]
+                      }),
+                      /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+                        className: "dsh-fleet-num",
+                        children: [
+                          step.durationMs,
+                          " ms"
+                        ]
+                      })
+                    ]
+                  }),
+                  step.summary && /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                    children: step.summary
+                  })
+                ]
+              }, `${step.name}-${i}`)),
+              checks.failure && /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                    style: { color: "var(--fleet-c-error)", fontWeight: 560, fontSize: 12 },
+                    children: [
+                      "失败：",
+                      checks.failure.step,
+                      " — ",
+                      checks.failure.reason
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("pre", {
+                    className: "dsh-fleet-check-excerpt",
+                    children: checks.failure.excerpt
+                  })
+                ]
+              })
+            ]
+          })
+        ]
+      }),
+      /* @__PURE__ */ jsx_runtime3.jsxs("footer", {
+        className: "dsh-fleet-footer",
+        children: [
+          pane.writable && pane.status !== "blocked" && /* @__PURE__ */ jsx_runtime3.jsxs("form", {
+            className: "dsh-fleet-prompt-row",
+            onSubmit: handleSendPrompt,
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsx("textarea", {
+                className: "dsh-fleet-prompt-textarea",
+                value: promptText,
+                onChange: (e) => setPromptText(e.target.value),
+                onKeyDown: (e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    handleSendPrompt();
+                  }
+                },
+                placeholder: "向该 Agent 发送指令… (⌘↵ 发送)",
+                rows: 2,
+                disabled: sending
+              }),
+              /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                type: "submit",
+                className: "dsh-fleet-btn dsh-fleet-btn--primary",
+                disabled: sending || !promptText.trim(),
+                children: "发送"
+              })
+            ]
+          }),
+          !pane.writable && /* @__PURE__ */ jsx_runtime3.jsx("div", {
+            className: "dsh-fleet-readonly-notice",
+            children: /* @__PURE__ */ jsx_runtime3.jsxs("span", {
+              children: [
+                "⧉ ",
+                WRITABLE_REASON_TEXT[pane.writableReason] ?? "该面板只读，不提供输入框"
+              ]
+            })
+          }),
+          pane.agent && /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+            className: "dsh-fleet-handoff",
+            children: [
+              /* @__PURE__ */ jsx_runtime3.jsx("span", {
+                style: { fontSize: 11, color: "var(--fleet-text-3)" },
+                children: "接着问会带上最近 20 条消息（超 8k 截断），在新会话里继续"
+              }),
+              /* @__PURE__ */ jsx_runtime3.jsxs("div", {
+                className: "dsh-fleet-handoff-actions",
+                children: [
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    title: "开一个新会话，带上这条线程的最近 20 条",
+                    onClick: () => onHandoffContinue?.(pane, framesData?.frames ?? []),
+                    children: "接着问 → 开新会话"
+                  }),
+                  /* @__PURE__ */ jsx_runtime3.jsx("button", {
+                    type: "button",
+                    className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                    onClick: handleCopyContext,
+                    children: copied ? "已复制 ✓" : "复制上下文"
+                  })
+                ]
+              })
+            ]
+          })
+        ]
+      })
+    ]
+  });
+}
+
+// src/fleet/styles.js
+var FLEET_STYLE_ID = "dsh-fleet-control-room-styles";
+var FLEET_CSS = `
+.dsh-fleet-root {
+  --fleet-bg: var(--dsw-alias-bg, #141416);
+  --fleet-bg-elev: var(--dsw-alias-bg-secondary, #1c1c1f);
+  --fleet-bg-subtle: var(--dsw-alias-bg-tertiary, rgba(255, 255, 255, 0.04));
+  --fleet-border: var(--dsw-alias-border, rgba(128, 128, 128, 0.22));
+  --fleet-text: var(--dsw-alias-text-primary, #f2f2f7);
+  --fleet-text-2: var(--dsw-alias-text-secondary, #aeaeb2);
+  --fleet-text-3: var(--dsw-alias-text-tertiary, #8e8e93);
+  --fleet-accent: var(--dsw-alias-accent, #0a84ff);
+  --fleet-c-working: var(--dsw-alias-state-info-primary, #0a84ff);
+  --fleet-c-blocked: var(--dsw-alias-state-warning-primary, #ff9f0a);
+  --fleet-c-success: var(--dsw-alias-state-success-primary, #30d158);
+  --fleet-c-error: var(--dsw-alias-state-error-primary, #ff453a);
+  --fleet-c-idle: var(--dsw-alias-text-tertiary, #8e8e93);
+  --fleet-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  background: var(--fleet-bg);
+  color: var(--fleet-text);
+  font-size: 13px;
+  line-height: 1.45;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.dsh-fleet-root *, .dsh-fleet-root *::before, .dsh-fleet-root *::after {
+  box-sizing: border-box;
+}
+
+.dsh-fleet-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Top bar & banners */
+.dsh-fleet-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-topbar-left, .dsh-fleet-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-fleet-brand {
+  font-size: 14px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.dsh-fleet-stat-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dsh-fleet-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-banner--warn {
+  background: color-mix(in srgb, var(--fleet-c-blocked) 10%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-banner--error {
+  background: color-mix(in srgb, var(--fleet-c-error) 12%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-banner--info {
+  background: color-mix(in srgb, var(--fleet-accent) 9%, var(--fleet-bg));
+  color: var(--fleet-text);
+}
+
+/* 3-pane control room body */
+.dsh-fleet-body {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr) 276px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dsh-fleet-body--no-inspector {
+  grid-template-columns: 268px minmax(0, 1fr);
+}
+
+@media (max-width: 900px) {
+  .dsh-fleet-body {
+    grid-template-columns: 224px minmax(0, 1fr);
+  }
+  .dsh-fleet-inspector {
+    display: none;
+  }
+}
+
+/* 6px status dot */
+.dsh-fleet-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--fleet-c-idle);
+}
+
+.dsh-fleet-dot--working {
+  background: var(--fleet-c-working);
+  animation: dsh-fleet-breathe 2s ease-in-out infinite;
+}
+
+.dsh-fleet-dot--stalled {
+  background: var(--fleet-c-blocked);
+}
+
+.dsh-fleet-dot--blocked {
+  background: var(--fleet-c-blocked);
+}
+
+.dsh-fleet-dot--done {
+  background: var(--fleet-c-success);
+}
+
+.dsh-fleet-dot--idle {
+  background: var(--fleet-c-idle);
+}
+
+.dsh-fleet-dot--unknown {
+  background: var(--fleet-c-error);
+}
+
+@keyframes dsh-fleet-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Buttons & pills */
+.dsh-fleet-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  color: var(--fleet-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+
+.dsh-fleet-btn:hover:not(:disabled) {
+  background: var(--fleet-bg-subtle);
+  border-color: color-mix(in srgb, var(--fleet-text) 28%, transparent);
+}
+
+.dsh-fleet-btn:focus-visible {
+  outline: 2px solid var(--fleet-accent);
+  outline-offset: 1px;
+}
+
+.dsh-fleet-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dsh-fleet-btn--primary {
+  background: var(--fleet-accent);
+  border-color: var(--fleet-accent);
+  color: #ffffff;
+}
+
+.dsh-fleet-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--fleet-accent);
+}
+
+.dsh-fleet-btn--danger {
+  color: var(--fleet-c-error);
+  border-color: color-mix(in srgb, var(--fleet-c-error) 45%, transparent);
+}
+
+.dsh-fleet-btn--active {
+  background: color-mix(in srgb, var(--fleet-accent) 16%, var(--fleet-bg));
+  border-color: color-mix(in srgb, var(--fleet-accent) 55%, transparent);
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-btn--sm {
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.dsh-fleet-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 0.5px solid var(--fleet-border);
+  color: var(--fleet-text-2);
+  background: var(--fleet-bg-subtle);
+  white-space: nowrap;
+}
+
+.dsh-fleet-pill--passed {
+  color: var(--fleet-c-success);
+  border-color: color-mix(in srgb, var(--fleet-c-success) 40%, transparent);
+}
+
+.dsh-fleet-pill--failed {
+  color: var(--fleet-c-error);
+  border-color: color-mix(in srgb, var(--fleet-c-error) 45%, transparent);
+}
+
+.dsh-fleet-pill--running {
+  color: var(--fleet-c-working);
+  border-color: color-mix(in srgb, var(--fleet-c-working) 40%, transparent);
+}
+
+.dsh-fleet-pill--stale {
+  color: var(--fleet-c-blocked);
+  border-color: color-mix(in srgb, var(--fleet-c-blocked) 40%, transparent);
+}
+
+.dsh-fleet-select {
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  color: var(--fleet-text);
+  font-size: 11px;
+}
+
+/* Roster (Left Column) */
+.dsh-fleet-roster {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+}
+
+.dsh-fleet-roster-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-search {
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  color: var(--fleet-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.dsh-fleet-search:focus {
+  border-color: var(--fleet-accent);
+}
+
+.dsh-fleet-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dsh-fleet-roster-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 6px 10px;
+}
+
+.dsh-fleet-group {
+  margin-bottom: 8px;
+}
+
+.dsh-fleet-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--fleet-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+.dsh-fleet-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--fleet-text-3);
+  font-size: 11px;
+  font-weight: 560;
+  padding: 4px 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dsh-fleet-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 7px 8px;
+  margin-bottom: 2px;
+  border-radius: 6px;
+  border: 0.5px solid transparent;
+  background: transparent;
+  color: var(--fleet-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+
+.dsh-fleet-row:hover {
+  background: var(--fleet-bg-subtle);
+}
+
+.dsh-fleet-row--selected {
+  background: color-mix(in srgb, var(--fleet-accent) 14%, var(--fleet-bg));
+  border-color: color-mix(in srgb, var(--fleet-accent) 36%, transparent);
+}
+
+.dsh-fleet-row--blocked:not(.dsh-fleet-row--selected) {
+  background: color-mix(in srgb, var(--fleet-c-blocked) 4%, transparent);
+}
+
+.dsh-fleet-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dsh-fleet-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 540;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-fleet-row-time {
+  font-size: 11px;
+  color: var(--fleet-text-3);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--fleet-text-2);
+  min-width: 0;
+}
+
+.dsh-fleet-row-summary {
+  font-size: 12px;
+  color: var(--fleet-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-fleet-shells-footer {
+  border-top: 0.5px solid var(--fleet-border);
+  padding: 6px 8px;
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* Center Stage */
+.dsh-fleet-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--fleet-bg);
+}
+
+.dsh-fleet-stage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-stage-title-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.dsh-fleet-stage-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 590;
+  min-width: 0;
+}
+
+.dsh-fleet-stage-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-fleet-stage-sub {
+  font-size: 11px;
+  color: var(--fleet-text-3);
+  font-family: var(--fleet-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-fleet-stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.dsh-fleet-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  color: var(--fleet-text-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dsh-fleet-tab--active {
+  color: var(--fleet-text);
+}
+
+.dsh-fleet-tab--active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  background: var(--fleet-accent);
+  border-radius: 2px 2px 0 0;
+}
+
+/* Blocked Approval Fast-Path */
+.dsh-fleet-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  background: color-mix(in srgb, var(--fleet-c-blocked) 8%, var(--fleet-bg));
+  flex-shrink: 0;
+}
+
+.dsh-fleet-approval-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.dsh-fleet-approval-screen {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  font-family: var(--fleet-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dsh-fleet-approval-keys {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dsh-fleet-approval-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dsh-fleet-approval-input {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  color: var(--fleet-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.dsh-fleet-approval-input:focus {
+  border-color: var(--fleet-accent);
+}
+
+/* Stage scroll content */
+.dsh-fleet-stage-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Frames */
+.dsh-fleet-frame-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--fleet-bg-subtle);
+  border: 0.5px solid var(--fleet-border);
+  font-size: 11px;
+  color: var(--fleet-text-3);
+  font-family: var(--fleet-mono);
+}
+
+.dsh-fleet-frame-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.dsh-fleet-frame-text--user {
+  background: color-mix(in srgb, var(--fleet-accent) 9%, var(--fleet-bg-elev));
+  border-color: color-mix(in srgb, var(--fleet-accent) 26%, transparent);
+}
+
+.dsh-fleet-frame-role {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--fleet-text-3);
+}
+
+.dsh-fleet-md p { margin: 0 0 6px; }
+.dsh-fleet-md p:last-child { margin-bottom: 0; }
+.dsh-fleet-md h1, .dsh-fleet-md h2, .dsh-fleet-md h3 {
+  margin: 8px 0 4px;
+  font-size: 14px;
+  font-weight: 590;
+}
+.dsh-fleet-md ul, .dsh-fleet-md ol {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+.dsh-fleet-md blockquote {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 2px solid var(--fleet-border);
+  color: var(--fleet-text-2);
+}
+.dsh-fleet-md code {
+  font-family: var(--fleet-mono);
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--fleet-bg-subtle);
+  word-break: break-all;
+}
+.dsh-fleet-md pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--fleet-bg);
+  border: 0.5px solid var(--fleet-border);
+  overflow-x: auto;
+  font-family: var(--fleet-mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.dsh-fleet-md pre code {
+  padding: 0;
+  background: none;
+  word-break: normal;
+}
+.dsh-fleet-md table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+  width: 100%;
+}
+.dsh-fleet-md th, .dsh-fleet-md td {
+  border: 0.5px solid var(--fleet-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.dsh-fleet-md a {
+  color: var(--fleet-accent);
+  text-decoration: none;
+}
+.dsh-fleet-md a:hover {
+  text-decoration: underline;
+}
+
+.dsh-fleet-frame-reasoning {
+  border: 0.5px solid var(--fleet-border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: var(--fleet-bg-subtle);
+  font-size: 12px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-frame-reasoning summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--fleet-text-3);
+  user-select: none;
+}
+
+.dsh-fleet-frame-work {
+  border: 0.5px solid var(--fleet-border);
+  border-radius: 8px;
+  background: var(--fleet-bg-elev);
+  overflow: hidden;
+}
+
+.dsh-fleet-work-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  font-size: 12px;
+  font-weight: 540;
+}
+
+.dsh-fleet-work-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 56px 56px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-bottom: 0.5px solid color-mix(in srgb, var(--fleet-border) 55%, transparent);
+}
+
+.dsh-fleet-work-row:last-child {
+  border-bottom: none;
+}
+
+.dsh-fleet-work-verb {
+  font-family: var(--fleet-mono);
+  font-size: 11px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-work-obj {
+  font-family: var(--fleet-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-fleet-frame-final {
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 0.5px solid color-mix(in srgb, var(--fleet-c-success) 40%, transparent);
+  background: color-mix(in srgb, var(--fleet-c-success) 7%, var(--fleet-bg-elev));
+}
+
+/* Live Screen */
+.dsh-fleet-screen-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.dsh-fleet-screen-pre {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--fleet-border);
+  background: #0d0d0f;
+  color: #e5e5ea;
+  font-family: var(--fleet-mono);
+  font-size: 12px;
+  line-height: 1.42;
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 180px;
+  white-space: pre;
+}
+
+.dsh-fleet-keybar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 0 2px;
+}
+
+/* Composer & Read-Only Handoff Footer */
+.dsh-fleet-footer {
+  border-top: 0.5px solid var(--fleet-border);
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--fleet-bg);
+  flex-shrink: 0;
+}
+
+.dsh-fleet-prompt-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.dsh-fleet-prompt-textarea {
+  flex: 1 1 auto;
+  min-height: 36px;
+  max-height: 140px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  color: var(--fleet-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  outline: none;
+}
+
+.dsh-fleet-prompt-textarea:focus {
+  border-color: var(--fleet-accent);
+}
+
+.dsh-fleet-readonly-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--fleet-bg-subtle);
+  border: 0.5px solid var(--fleet-border);
+  font-size: 12px;
+  color: var(--fleet-text-2);
+}
+
+.dsh-fleet-handoff {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dsh-fleet-handoff-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Confirm inline bar */
+.dsh-fleet-confirm-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 14px;
+  border-bottom: 0.5px solid var(--fleet-border);
+  background: color-mix(in srgb, var(--fleet-c-error) 10%, var(--fleet-bg));
+  font-size: 12px;
+}
+
+/* Inspector (Right Column) */
+.dsh-fleet-inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg);
+  overflow-y: auto;
+  padding: 12px;
+  gap: 14px;
+}
+
+.dsh-fleet-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dsh-fleet-section-title {
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--fleet-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.dsh-fleet-kv {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 4px 8px;
+  font-size: 12px;
+}
+
+.dsh-fleet-kv-k {
+  color: var(--fleet-text-3);
+}
+
+.dsh-fleet-kv-v {
+  color: var(--fleet-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-all;
+}
+
+.dsh-fleet-check-step {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 0.5px solid var(--fleet-border);
+  background: var(--fleet-bg-elev);
+  font-size: 12px;
+}
+
+.dsh-fleet-check-excerpt {
+  margin: 4px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--fleet-bg-elev);
+  border: 0.5px solid color-mix(in srgb, var(--fleet-c-error) 40%, transparent);
+  font-family: var(--fleet-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.dsh-fleet-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--fleet-text-2);
+  flex: 1 1 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-fleet-dot--working {
+    animation: none;
+  }
+  .dsh-fleet-btn, .dsh-fleet-row {
+    transition: none;
+  }
+}
+`;
+function ensureFleetStyles(doc = globalThis.document) {
+  if (!doc || !doc.head)
+    return;
+  if (typeof doc.getElementById === "function" && doc.getElementById(FLEET_STYLE_ID))
+    return;
+  const style = doc.createElement("style");
+  style.id = FLEET_STYLE_ID;
+  style.setAttribute("data-dsh-fleet-styles", "1");
+  style.textContent = FLEET_CSS;
+  doc.head.appendChild(style);
+}
+
+// src/fleet/transport.js
+var BUILTIN_NOW = 1800000000000;
+var NO_CHECKS = {
+  gate: "none",
+  startedAt: null,
+  durationMs: null,
+  baseRevision: null,
+  headRevision: null,
+  steps: [],
+  failure: null
+};
+function makeBuiltinFixtures() {
+  const n = BUILTIN_NOW;
+  const healthOk = {
+    connected: true,
+    socket: "~/.config/herdr/herdr.sock",
+    version: "0.9.5",
+    protocol: 22,
+    lastOkAt: n - 800,
+    error: null,
+    session: null
+  };
+  const blockedPane = {
+    id: "w1:p1",
+    workspaceId: "w1",
+    tabId: "w1:t1",
+    workspaceLabel: "dsh-fleet",
+    tabLabel: "main",
+    title: "审查构建脚本",
+    cwd: "~/demo/work/dsh-fleet",
+    focused: false,
+    agent: { kind: "claude", name: "dsh-reviewer", display: "claude · reviewer", session: null, interactiveReady: true },
+    status: "blocked",
+    stalled: false,
+    completionSeq: 3,
+    stateChangeSeq: 12,
+    stateSince: n - 240000,
+    outputAt: n - 240000,
+    revision: 412,
+    summary: "等待批准：Bash — rm -rf dist/ && bun run build",
+    summarySource: "screen",
+    writable: true,
+    writableReason: null,
+    checks: { ...NO_CHECKS }
+  };
+  const donePane = {
+    id: "w1:p2",
+    workspaceId: "w1",
+    tabId: "w1:t1",
+    workspaceLabel: "dsh-fleet",
+    tabLabel: "main",
+    title: "运行单元测试",
+    cwd: "~/demo/work/dsh-fleet",
+    focused: false,
+    agent: { kind: "codex", name: "dsh-tester", display: "codex · tester", session: null, interactiveReady: true },
+    status: "done",
+    stalled: false,
+    completionSeq: 15,
+    stateChangeSeq: 44,
+    stateSince: n - 720000,
+    outputAt: n - 720000,
+    revision: 903,
+    summary: "全部测试通过",
+    summarySource: "transcript",
+    writable: true,
+    writableReason: null,
+    checks: {
+      gate: "passed",
+      startedAt: null,
+      durationMs: 2150,
+      baseRevision: "abc1234",
+      headRevision: "def5678",
+      steps: [{ name: "test", status: "passed", durationMs: 2150, summary: "all tests passed" }],
+      failure: null
+    }
+  };
+  const workingPane = {
+    id: "w1:p3",
+    workspaceId: "w1",
+    tabId: "w1:t1",
+    workspaceLabel: "dsh-fleet",
+    tabLabel: "main",
+    title: "实现控制室界面",
+    cwd: "~/demo/work/dsh-fleet",
+    focused: true,
+    agent: { kind: "pi", name: "dsh-frontend", display: "pi · frontend", session: { kind: "path", source: "herdr:pi" }, interactiveReady: true },
+    status: "working",
+    stalled: false,
+    completionSeq: 6,
+    stateChangeSeq: 52,
+    stateSince: n - 540000,
+    outputAt: n - 3000,
+    revision: 1288,
+    summary: "正在更新 src/fleet/stage.jsx",
+    summarySource: "transcript",
+    writable: true,
+    writableReason: null,
+    checks: { ...NO_CHECKS }
+  };
+  const idlePane = {
+    id: "w1:p4",
+    workspaceId: "w1",
+    tabId: "w1:t1",
+    workspaceLabel: "dsh-fleet",
+    tabLabel: "main",
+    title: "文档整理",
+    cwd: "~/demo/work/docs",
+    focused: false,
+    agent: { kind: "opencode", name: "docs-writer", display: "opencode · docs", session: null, interactiveReady: true },
+    status: "idle",
+    stalled: false,
+    completionSeq: 1,
+    stateChangeSeq: 4,
+    stateSince: n - 1800000,
+    outputAt: n - 1800000,
+    revision: 64,
+    summary: "",
+    summarySource: "none",
+    writable: true,
+    writableReason: null,
+    checks: { ...NO_CHECKS }
+  };
+  const shellPane = {
+    id: "w1:p5",
+    workspaceId: "w1",
+    tabId: "w1:t1",
+    workspaceLabel: "dsh-fleet",
+    tabLabel: "main",
+    title: "zsh — dsh-fleet",
+    cwd: "~/demo/work/dsh-fleet",
+    focused: false,
+    agent: null,
+    status: "unknown",
+    stalled: false,
+    completionSeq: 0,
+    stateChangeSeq: 0,
+    stateSince: n - 1800000,
+    outputAt: n - 1800000,
+    revision: 5,
+    summary: "",
+    summarySource: "none",
+    writable: false,
+    writableReason: "not-an-agent",
+    checks: { ...NO_CHECKS }
+  };
+  const baseState = (overrides) => ({
+    ok: true,
+    protocol: 1,
+    revision: 100,
+    now: n,
+    stale: false,
+    machine: { id: "local", label: "本机" },
+    health: { ...healthOk },
+    policy: { write: "all" },
+    workspaces: [{ id: "w1", label: "dsh-fleet", focused: true, tabCount: 1, paneCount: 0 }],
+    panes: [],
+    counts: { blocked: 0, done: 0, working: 0, idle: 0, unknown: 0, agents: 0, shells: 0, panes: 0 },
+    ...overrides
+  });
+  const buildScenario = (panes, stateOverrides = {}, screens = {}, frames = {}) => {
+    const state = baseState({ panes, ...stateOverrides });
+    recomputeCountsAndWorkspaces(state);
+    return { state, frames, screens };
+  };
+  const blockedScreen = {
+    ok: true,
+    paneId: "w1:p1",
+    revision: 412,
+    format: "ansi",
+    text: `\x1B[1;36mBash\x1B[0m rm -rf dist/ && bun run build
+Do you want to proceed?
+  1. Yes
+  2. No
+`,
+    cols: 120,
+    rows: 32,
+    at: n - 1000
+  };
+  const blockedFrames = {
+    ok: true,
+    paneId: "w1:p1",
+    source: "transcript",
+    reason: null,
+    agentKind: "claude",
+    sessionId: "demo-session-1",
+    frames: [
+      { kind: "session", id: "f1", sessionId: "demo-session-1", cwd: "~/demo/work/dsh-fleet" },
+      { kind: "text", id: "f2", role: "user", text: "清理构建产物并重新构建。", at: n - 300000 },
+      { kind: "reasoning", id: "f3", text: "需要先运行清理再执行 bun run build。" },
+      { kind: "work", id: "f4", summary: "等待批准", rows: [{ verb: "Bash", object: "rm -rf dist/ && bun run build", outcome: null, ms: null }], tokens: 1200 }
+    ],
+    hasEarlier: false,
+    partial: false,
+    reset: false,
+    unknownFrames: 0,
+    cursor: { start: "o:0", end: "o:1024" }
+  };
+  const stalePanes = [workingPane, shellPane].map((p) => ({
+    ...p,
+    writable: false,
+    writableReason: p.agent === null ? "not-an-agent" : "offline"
+  }));
+  return {
+    about: "Built-in neutral fallback fixtures for browser dev switcher",
+    now: n,
+    scenarios: {
+      busy: buildScenario([blockedPane, donePane, workingPane, idlePane, shellPane], {}, { "w1:p1": blockedScreen }, { "w1:p1": blockedFrames }),
+      blocked: buildScenario([blockedPane], {}, { "w1:p1": blockedScreen }, { "w1:p1": blockedFrames }),
+      calm: buildScenario([idlePane]),
+      empty: buildScenario([shellPane]),
+      offline: buildScenario([], {
+        revision: 0,
+        stale: false,
+        health: { connected: false, socket: null, version: null, protocol: null, lastOkAt: null, error: "herdr socket not found", session: null }
+      }),
+      stale: buildScenario(stalePanes, {
+        stale: true,
+        health: { connected: false, socket: "~/.config/herdr/herdr.sock", version: "0.9.5", protocol: 22, lastOkAt: n - 45000, error: "ECONNREFUSED", session: null }
+      })
+    }
+  };
+}
+var cachedBuiltinFixtures = null;
+function getDefaultFixtures() {
+  if (!cachedBuiltinFixtures)
+    cachedBuiltinFixtures = makeBuiltinFixtures();
+  return cachedBuiltinFixtures;
+}
+var TIME_FIELDS = Object.freeze(["now", "stateSince", "outputAt", "lastOkAt", "at"]);
+var WHITELIST_KEYS = Object.freeze([
+  "enter",
+  "esc",
+  "tab",
+  "shift+tab",
+  "up",
+  "down",
+  "left",
+  "right",
+  "space",
+  "backspace",
+  "ctrl+c",
+  "ctrl+d",
+  "y",
+  "n",
+  "1",
+  "2",
+  "3",
+  "4"
+]);
+var VERBS = Object.freeze([
+  "prompt",
+  "answer",
+  "keys",
+  "interrupt",
+  "rename",
+  "restart",
+  "close"
+]);
+var SCENARIO_NAMES = Object.freeze([
+  "busy",
+  "blocked",
+  "calm",
+  "empty",
+  "offline",
+  "stale"
+]);
+var TIME_FIELD_SET = new Set(TIME_FIELDS);
+var KEY_SET = new Set(WHITELIST_KEYS);
+var VERB_SET = new Set(VERBS);
+var NEEDS_CONFIRM = new Set(["restart", "close"]);
+var AGENT_NAME_RE2 = /^[a-z][a-z0-9_-]{0,31}$/;
+function rebaseTimestamps(value, delta) {
+  if (value === null || typeof value !== "object")
+    return value;
+  if (Array.isArray(value))
+    return value.map((item) => rebaseTimestamps(item, delta));
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (TIME_FIELD_SET.has(key) && typeof child === "number" && Number.isFinite(child)) {
+      out[key] = Math.max(0, Math.round(child + delta));
+    } else {
+      out[key] = rebaseTimestamps(child, delta);
+    }
+  }
+  return out;
+}
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function isNonNegInt(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+function isValidId(value) {
+  return typeof value === "string" && value.length >= 1 && value.length <= 64;
+}
+function hasOnlyKeys(obj, allowed) {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.has(key))
+      return false;
+  }
+  return true;
+}
+function validateActShape(request) {
+  const fail = (status, reason, message) => ({ ok: false, status, reason, message });
+  if (!isPlainObject(request) || typeof request.verb !== "string") {
+    return fail(400, "invalid-request", "请求体必须是包含 verb 的对象");
+  }
+  if (!VERB_SET.has(request.verb)) {
+    return fail(400, "unknown-verb", `不支持的操作：${request.verb}`);
+  }
+  if (NEEDS_CONFIRM.has(request.verb) && request.confirm !== true) {
+    return fail(400, "confirm-required", `${request.verb} 需要显式确认（confirm: true）`);
+  }
+  if (request.verb === "keys" && Array.isArray(request.keys) && request.keys.some((k) => !KEY_SET.has(k))) {
+    return fail(400, "key-not-allowed", "包含白名单之外的按键");
+  }
+  switch (request.verb) {
+    case "prompt":
+      if (!hasOnlyKeys(request, new Set(["verb", "pane", "text"])) || !isValidId(request.pane) || typeof request.text !== "string" || request.text.length < 1 || request.text.length > 20000) {
+        return fail(400, "invalid-request", "prompt 参数不合法");
+      }
+      return null;
+    case "answer":
+      if (!hasOnlyKeys(request, new Set(["verb", "pane", "text", "enter", "expectRevision"])) || !isValidId(request.pane) || typeof request.text !== "string" || request.text.length < 1 || request.text.length > 2000 || typeof request.enter !== "boolean" || !isNonNegInt(request.expectRevision)) {
+        return fail(400, "invalid-request", "answer 参数不合法");
+      }
+      return null;
+    case "keys":
+      if (!hasOnlyKeys(request, new Set(["verb", "pane", "keys", "expectRevision"])) || !isValidId(request.pane) || !Array.isArray(request.keys) || request.keys.length < 1 || request.keys.length > 8 || !isNonNegInt(request.expectRevision)) {
+        return fail(400, "invalid-request", "keys 参数不合法");
+      }
+      return null;
+    case "interrupt":
+      if (!hasOnlyKeys(request, new Set(["verb", "pane"])) || !isValidId(request.pane)) {
+        return fail(400, "invalid-request", "interrupt 参数不合法");
+      }
+      return null;
+    case "rename":
+      if (!hasOnlyKeys(request, new Set(["verb", "pane", "name"])) || !isValidId(request.pane) || typeof request.name !== "string" || !AGENT_NAME_RE2.test(request.name)) {
+        return fail(400, "invalid-request", "name 必须匹配 ^[a-z][a-z0-9_-]{0,31}$");
+      }
+      return null;
+    case "restart":
+      if (!hasOnlyKeys(request, new Set(["verb", "pane", "confirm", "thenPrompt"])) || !isValidId(request.pane) || request.confirm !== true || "thenPrompt" in request && (typeof request.thenPrompt !== "string" || request.thenPrompt.length < 1 || request.thenPrompt.length > 20000)) {
+        return fail(400, "invalid-request", "restart 参数不合法");
+      }
+      return null;
+    case "close":
+      if (!hasOnlyKeys(request, new Set(["verb", "pane", "confirm"])) || !isValidId(request.pane) || request.confirm !== true) {
+        return fail(400, "invalid-request", "close 参数不合法");
+      }
+      return null;
+    default:
+      return fail(400, "unknown-verb", "未知操作");
+  }
+}
+
+class LiveTransport {
+  constructor({ baseUrl = "/plugin/fleet", fetchImpl = globalThis.fetch?.bind(globalThis), EventSourceImpl = globalThis.EventSource } = {}) {
+    this.kind = "live";
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this._fetch = fetchImpl;
+    this._EventSource = EventSourceImpl;
+    this._listeners = new Set;
+    this._stream = null;
+    this._state = null;
+  }
+  _notify(state) {
+    this._state = state;
+    for (const listener of this._listeners) {
+      try {
+        listener(state);
+      } catch {}
+    }
+  }
+  _openStream() {
+    if (this._stream || typeof this._EventSource !== "function")
+      return;
+    const es = new this._EventSource(`${this.baseUrl}/stream`);
+    es.addEventListener("state", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        if (parsed && parsed.ok === true)
+          this._notify(parsed);
+      } catch {}
+    });
+    this._stream = es;
+  }
+  _closeStream() {
+    if (!this._stream)
+      return;
+    try {
+      this._stream.close();
+    } catch {}
+    this._stream = null;
+  }
+  subscribe(listener) {
+    this._listeners.add(listener);
+    if (this._state)
+      listener(this._state);
+    if (this._listeners.size === 1) {
+      this._openStream();
+      if (!this._state) {
+        this.getState().then((s) => {
+          if (s && s.ok === true && this._listeners.size > 0)
+            this._notify(s);
+        }).catch(() => {});
+      }
+    }
+    return () => {
+      this._listeners.delete(listener);
+      if (this._listeners.size === 0)
+        this._closeStream();
+    };
+  }
+  reconnect() {
+    this._closeStream();
+    if (this._listeners.size > 0)
+      this._openStream();
+    return this.getState().then((s) => {
+      if (s && s.ok === true)
+        this._notify(s);
+      return s;
+    });
+  }
+  async _json(url, init) {
+    if (typeof this._fetch !== "function") {
+      return { ok: false, status: 503, reason: "herdr-offline", message: "fetch 不可用" };
+    }
+    try {
+      const response = await this._fetch(url, { credentials: "same-origin", ...init });
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = { ok: false, reason: "internal", message: `HTTP ${response.status}` };
+      }
+      if (payload && typeof payload === "object") {
+        return { status: response.status, ...payload };
+      }
+      return { ok: false, status: response.status, reason: "internal", message: "响应格式错误" };
+    } catch (error) {
+      return { ok: false, status: 503, reason: "herdr-offline", message: String(error?.message ?? error) };
+    }
+  }
+  async getState() {
+    return await this._json(`${this.baseUrl}/state`);
+  }
+  async getFrames(paneId, { after, before, limit } = {}) {
+    const params = new URLSearchParams({ pane: paneId });
+    if (after !== undefined && after !== null)
+      params.set("after", String(after));
+    if (before !== undefined && before !== null)
+      params.set("before", String(before));
+    if (limit !== undefined && limit !== null)
+      params.set("limit", String(limit));
+    return await this._json(`${this.baseUrl}/frames?${params.toString()}`);
+  }
+  async getScreen(paneId) {
+    const params = new URLSearchParams({ pane: paneId });
+    return await this._json(`${this.baseUrl}/screen?${params.toString()}`);
+  }
+  async act(request) {
+    return await this._json(`${this.baseUrl}/act`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request)
+    });
+  }
+  close() {
+    this._listeners.clear();
+    this._closeStream();
+  }
+}
+function recomputeCountsAndWorkspaces(state) {
+  const counts = { blocked: 0, done: 0, working: 0, idle: 0, unknown: 0, agents: 0, shells: 0, panes: state.panes.length };
+  const wsMap = new Map;
+  for (const pane of state.panes) {
+    if (pane.agent === null)
+      counts.shells += 1;
+    else {
+      counts.agents += 1;
+      if (pane.status in counts)
+        counts[pane.status] += 1;
+    }
+    const existing = wsMap.get(pane.workspaceId) ?? {
+      id: pane.workspaceId,
+      label: pane.workspaceLabel,
+      focused: false,
+      tabs: new Set,
+      paneCount: 0
+    };
+    existing.tabs.add(pane.tabId);
+    existing.paneCount += 1;
+    existing.focused ||= pane.focused;
+    wsMap.set(pane.workspaceId, existing);
+  }
+  state.counts = counts;
+  state.workspaces = [...wsMap.values()].map((w) => ({
+    id: w.id,
+    label: w.label,
+    focused: w.focused,
+    tabCount: w.tabs.size,
+    paneCount: w.paneCount
+  }));
+}
+
+class FixtureTransport {
+  constructor({ scenario = "busy", fixtures = getDefaultFixtures(), now = () => Date.now(), delta } = {}) {
+    this.kind = "fixture";
+    this._fixtures = fixtures;
+    this._now = now;
+    this._fixedDelta = typeof delta === "number" ? delta : null;
+    this._listeners = new Set;
+    this._seq = 1;
+    this.setScenario(scenario);
+  }
+  get scenario() {
+    return this._scenarioName;
+  }
+  setScenario(name) {
+    if (!this._fixtures?.scenarios?.[name]) {
+      throw new Error(`unknown fixture scenario: ${name}`);
+    }
+    this._scenarioName = name;
+    const d = this._fixedDelta !== null ? this._fixedDelta : this._now() - this._fixtures.now;
+    this._delta = d;
+    const raw = this._fixtures.scenarios[name];
+    this._state = rebaseTimestamps(raw.state, d);
+    this._frames = rebaseTimestamps(raw.frames, d);
+    this._screens = rebaseTimestamps(raw.screens, d);
+    this._notify();
+  }
+  _notify() {
+    const snap = structuredClone(this._state);
+    for (const listener of this._listeners) {
+      try {
+        listener(snap);
+      } catch {}
+    }
+  }
+  subscribe(listener) {
+    this._listeners.add(listener);
+    listener(structuredClone(this._state));
+    return () => {
+      this._listeners.delete(listener);
+    };
+  }
+  async reconnect() {
+    this._state.now = this._now();
+    this._notify();
+    return structuredClone(this._state);
+  }
+  async getState() {
+    return structuredClone(this._state);
+  }
+  async getFrames(paneId, { after, before, limit } = {}) {
+    if (after && before) {
+      return { ok: false, status: 400, reason: "invalid-request", message: "before 与 after 不能同时指定" };
+    }
+    const pane = this._state.panes.find((p) => p.id === paneId);
+    if (!pane) {
+      return { ok: false, status: 404, reason: "unknown-pane", message: `pane 不存在：${paneId}` };
+    }
+    const entry = this._frames[paneId];
+    if (!entry) {
+      return {
+        ok: true,
+        paneId,
+        source: this._state.health.connected && !this._state.stale ? "screen" : "none",
+        reason: "no-transcript",
+        agentKind: pane.agent?.kind ?? null,
+        sessionId: null,
+        frames: [],
+        hasEarlier: false,
+        partial: false,
+        reset: false,
+        unknownFrames: 0,
+        cursor: { start: null, end: null }
+      };
+    }
+    const cloned = structuredClone(entry);
+    if (after && after === cloned.cursor?.end) {
+      return { ...cloned, frames: [], hasEarlier: false, reset: false };
+    }
+    if (before && cloned.hasEarlier) {
+      const earlierFrame = {
+        kind: "text",
+        id: `earlier-${paneId}-${this._seq++}`,
+        role: "user",
+        text: "（更早的历史记录已加载）先梳理一下现有模块边界。",
+        at: Math.max(0, (cloned.frames.find((f) => typeof f.at === "number")?.at ?? this._state.now) - 120000)
+      };
+      return {
+        ...cloned,
+        frames: [earlierFrame],
+        hasEarlier: false,
+        cursor: { start: "o:0", end: cloned.cursor?.start ?? null }
+      };
+    }
+    if (typeof limit === "number" && limit > 0 && cloned.frames.length > limit) {
+      cloned.frames = cloned.frames.slice(-limit);
+      cloned.hasEarlier = true;
+    }
+    return cloned;
+  }
+  async getScreen(paneId) {
+    if (!this._state.health.connected || this._state.stale) {
+      return { ok: false, status: 503, reason: "herdr-offline", message: "herdr 未连接，无法读取屏幕" };
+    }
+    const pane = this._state.panes.find((p) => p.id === paneId);
+    if (!pane) {
+      return { ok: false, status: 404, reason: "unknown-pane", message: `pane 不存在：${paneId}` };
+    }
+    const screen = this._screens[paneId];
+    if (!screen) {
+      return {
+        ok: true,
+        paneId,
+        revision: pane.revision,
+        format: "ansi",
+        text: `\x1B[2m(${pane.title})\x1B[0m
+`,
+        cols: 120,
+        rows: 32,
+        at: this._now()
+      };
+    }
+    const copy = structuredClone(screen);
+    copy.revision = pane.revision;
+    return copy;
+  }
+  bumpPaneRevision(paneId, screenText) {
+    const pane = this._state.panes.find((p) => p.id === paneId);
+    if (!pane)
+      return null;
+    pane.revision += 1;
+    this._state.revision += 1;
+    if (this._screens[paneId]) {
+      this._screens[paneId].revision = pane.revision;
+      if (typeof screenText === "string")
+        this._screens[paneId].text = screenText;
+      this._screens[paneId].at = this._now();
+    }
+    this._notify();
+    return pane.revision;
+  }
+  async act(request) {
+    const shapeErr = validateActShape(request);
+    if (shapeErr)
+      return shapeErr;
+    const pane = this._state.panes.find((p) => p.id === request.pane);
+    if (!pane) {
+      return { ok: false, status: 404, reason: "unknown-pane", message: `pane 不存在：${request.pane}` };
+    }
+    if (pane.agent === null) {
+      return { ok: false, status: 409, reason: "not-an-agent", message: "普通终端面板只读，不支持写操作" };
+    }
+    if (this._state.policy.write === "read-only" || !pane.writable && (pane.writableReason === "policy-read-only" || pane.writableReason === "policy-dsh-only")) {
+      return {
+        ok: false,
+        status: 403,
+        reason: "policy-denied",
+        message: "当前写策略不允许操作该面板",
+        detail: { policy: this._state.policy.write }
+      };
+    }
+    if (!this._state.health.connected || this._state.stale) {
+      return { ok: false, status: 503, reason: "herdr-offline", message: "herdr 未连接，无法执行写操作" };
+    }
+    if (request.verb === "prompt" && pane.status === "blocked") {
+      return {
+        ok: false,
+        status: 409,
+        reason: "agent-blocked",
+        message: "Agent 正在等待审批或回答，请使用 answer 或 keys",
+        detail: { status: pane.status }
+      };
+    }
+    if (request.verb === "answer" && pane.status !== "blocked") {
+      return {
+        ok: false,
+        status: 409,
+        reason: "not-blocked",
+        message: "Agent 当前未在等待回答，请改用 prompt",
+        detail: { status: pane.status }
+      };
+    }
+    if ((request.verb === "answer" || request.verb === "keys") && request.expectRevision !== pane.revision) {
+      return {
+        ok: false,
+        status: 409,
+        reason: "screen-changed",
+        message: "屏幕内容已变化，已拒绝发送按键/回答，请刷新屏幕后重试",
+        detail: { revision: pane.revision }
+      };
+    }
+    const nowMs = this._now();
+    this._state.now = nowMs;
+    this._state.revision += 1;
+    const appendFrame = (frame) => {
+      if (this._frames[pane.id] && this._frames[pane.id].source === "transcript") {
+        this._frames[pane.id].frames.push(frame);
+        this._frames[pane.id].cursor.end = `o:${Date.now()}:${this._seq}`;
+      }
+    };
+    if (request.verb === "prompt") {
+      pane.revision += 1;
+      pane.status = "working";
+      pane.stalled = false;
+      pane.stateSince = nowMs;
+      pane.outputAt = nowMs;
+      pane.summary = request.text.slice(0, 240);
+      pane.summarySource = "transcript";
+      appendFrame({ kind: "text", id: `sim-${this._seq++}`, role: "user", text: request.text, at: nowMs });
+    } else if (request.verb === "answer") {
+      pane.revision += 1;
+      pane.status = "working";
+      pane.stalled = false;
+      pane.stateSince = nowMs;
+      pane.outputAt = nowMs;
+      pane.summary = `已回复：${request.text.slice(0, 120)}`;
+      pane.summarySource = "screen";
+      appendFrame({ kind: "text", id: `sim-${this._seq++}`, role: "user", text: request.text, at: nowMs });
+      if (this._screens[pane.id]) {
+        this._screens[pane.id].revision = pane.revision;
+        this._screens[pane.id].text += `
+\x1B[32m> ${request.text}\x1B[0m
+`;
+        this._screens[pane.id].at = nowMs;
+      }
+    } else if (request.verb === "keys") {
+      pane.revision += 1;
+      const lastKey = request.keys[request.keys.length - 1];
+      if (lastKey === "ctrl+c" || lastKey === "esc") {
+        pane.status = "idle";
+        pane.stalled = false;
+        pane.stateSince = nowMs;
+      } else if (pane.status === "blocked") {
+        pane.status = "working";
+        pane.stalled = false;
+        pane.stateSince = nowMs;
+        pane.outputAt = nowMs;
+        pane.summary = `已发送按键：${request.keys.join(" ")}`;
+      }
+      if (this._screens[pane.id]) {
+        this._screens[pane.id].revision = pane.revision;
+        this._screens[pane.id].text += `
+\x1B[2m[keys: ${request.keys.join(" ")}]\x1B[0m
+`;
+        this._screens[pane.id].at = nowMs;
+      }
+    } else if (request.verb === "interrupt") {
+      pane.revision += 1;
+      pane.status = "idle";
+      pane.stalled = false;
+      pane.stateSince = nowMs;
+      pane.summary = "已中断";
+    } else if (request.verb === "rename") {
+      pane.revision += 1;
+      pane.agent.name = request.name;
+    } else if (request.verb === "restart") {
+      pane.revision += 1;
+      pane.status = request.thenPrompt ? "working" : "idle";
+      pane.stalled = false;
+      pane.stateSince = nowMs;
+      pane.outputAt = nowMs;
+      pane.summary = request.thenPrompt ? request.thenPrompt.slice(0, 240) : "已重启";
+    } else if (request.verb === "close") {
+      this._state.panes = this._state.panes.filter((p) => p.id !== pane.id);
+      delete this._frames[pane.id];
+      delete this._screens[pane.id];
+      recomputeCountsAndWorkspaces(this._state);
+      this._notify();
+      return { ok: true, verb: "close", pane: pane.id, revision: null };
+    }
+    recomputeCountsAndWorkspaces(this._state);
+    this._notify();
+    return { ok: true, verb: request.verb, pane: pane.id, revision: pane.revision };
+  }
+  close() {
+    this._listeners.clear();
+  }
+}
+
+// src/fleet/fleet-view.jsx
+var jsx_runtime4 = require("react/jsx-runtime");
+var SEEN_STORAGE_KEY = "dsh-fleet:seen:v1";
+function loadSeenMap() {
+  try {
+    const raw = globalThis.localStorage?.getItem(SEEN_STORAGE_KEY);
+    if (!raw)
+      return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function saveSeenMap(map) {
+  try {
+    globalThis.localStorage?.setItem(SEEN_STORAGE_KEY, JSON.stringify(map));
+  } catch {}
+}
+function mergeFrames(existing, incoming, { prepend = false, reset = false } = {}) {
+  if (reset)
+    return incoming;
+  const seenIds = new Set;
+  const ordered = prepend ? [...incoming, ...existing] : [...existing, ...incoming];
+  const deduped = [];
+  for (const frame of ordered) {
+    if (seenIds.has(frame.id))
+      continue;
+    seenIds.add(frame.id);
+    deduped.push(frame);
+  }
+  return deduped;
+}
+function FleetView({
+  transport: externalTransport,
+  initialMode = "live",
+  onHandoffContinue,
+  jumpSignal = 0
+}) {
+  const [mode, setMode] = import_react4.useState(externalTransport ? "custom" : initialMode);
+  const [state, setState] = import_react4.useState(null);
+  const [selectedId, setSelectedId] = import_react4.useState(null);
+  const [activeTab, setActiveTab] = import_react4.useState("transcript");
+  const [inspectorOpen, setInspectorOpen] = import_react4.useState(true);
+  const [seen, setSeen] = import_react4.useState(loadSeenMap);
+  const [clockTick, setClockTick] = import_react4.useState(() => Date.now());
+  const [framesData, setFramesData] = import_react4.useState(null);
+  const [framesLoading, setFramesLoading] = import_react4.useState(false);
+  const [screenData, setScreenData] = import_react4.useState(null);
+  const [screenLoading, setScreenLoading] = import_react4.useState(false);
+  const searchInputRef = import_react4.useRef(null);
+  const lastFetchedRef = import_react4.useRef({ paneId: null, revision: null, cursorEnd: null });
+  import_react4.useEffect(() => {
+    ensureFleetStyles();
+  }, []);
+  const transport = import_react4.useMemo(() => {
+    if (externalTransport)
+      return externalTransport;
+    if (mode === "live")
+      return new LiveTransport;
+    return new FixtureTransport({ scenario: SCENARIO_NAMES.includes(mode) ? mode : "busy" });
+  }, [externalTransport, mode]);
+  import_react4.useEffect(() => {
+    const unsubscribe = transport.subscribe((nextState) => {
+      setState(nextState);
+    });
+    return () => {
+      unsubscribe();
+      if (!externalTransport)
+        transport.close();
+    };
+  }, [transport, externalTransport]);
+  import_react4.useEffect(() => {
+    const timer = setInterval(() => setClockTick(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  const clockOffset = state ? state.now - clockTick : 0;
+  const now = clockTick + (Math.abs(clockOffset) > 60000 ? clockOffset : 0);
+  const orderedPanes = import_react4.useMemo(() => sortByAttention(state?.panes ?? [], { now, seen }), [state?.panes, now, seen]);
+  import_react4.useEffect(() => {
+    const panes = state?.panes ?? [];
+    if (panes.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !panes.some((p) => p.id === selectedId)) {
+      const firstAgent = orderedPanes.find((p) => p.agent !== null) ?? orderedPanes[0];
+      setSelectedId(firstAgent?.id ?? null);
+    }
+  }, [state?.panes, selectedId, orderedPanes]);
+  const selectedPane = import_react4.useMemo(() => (state?.panes ?? []).find((p) => p.id === selectedId) ?? null, [state?.panes, selectedId]);
+  import_react4.useEffect(() => {
+    if (!selectedPane || selectedPane.status !== "done" || selectedPane.completionSeq <= 0)
+      return;
+    setSeen((prev) => {
+      if ((prev[selectedPane.id] ?? 0) >= selectedPane.completionSeq)
+        return prev;
+      const next = { ...prev, [selectedPane.id]: selectedPane.completionSeq };
+      saveSeenMap(next);
+      return next;
+    });
+  }, [selectedPane?.id, selectedPane?.status, selectedPane?.completionSeq]);
+  const jumpNextAttention = import_react4.useCallback(() => {
+    const candidates = orderedPanes.filter((p) => attentionGroup(p, { now, seen }) <= ATTENTION_GROUPS.stalled);
+    if (candidates.length === 0)
+      return false;
+    const idx = candidates.findIndex((p) => p.id === selectedId);
+    const next = candidates[(idx + 1) % candidates.length];
+    setSelectedId(next.id);
+    if (next.status === "blocked")
+      setActiveTab("transcript");
+    return true;
+  }, [orderedPanes, now, seen, selectedId]);
+  import_react4.useEffect(() => {
+    if (jumpSignal > 0)
+      jumpNextAttention();
+  }, [jumpSignal, jumpNextAttention]);
+  import_react4.useEffect(() => {
+    if (!selectedPane || !selectedPane.agent) {
+      setFramesData(null);
+      lastFetchedRef.current = { paneId: null, revision: null, cursorEnd: null };
+      return;
+    }
+    const prev = lastFetchedRef.current;
+    const samePane = prev.paneId === selectedPane.id;
+    if (samePane && prev.revision === selectedPane.revision)
+      return;
+    let cancelled = false;
+    setFramesLoading(true);
+    const after = samePane ? prev.cursorEnd : undefined;
+    transport.getFrames(selectedPane.id, after ? { after } : {}).then((res) => {
+      if (cancelled)
+        return;
+      if (res?.ok) {
+        setFramesData((cur) => {
+          if (!samePane || !cur || res.reset || res.source !== "transcript")
+            return res;
+          return {
+            ...res,
+            frames: mergeFrames(cur.frames ?? [], res.frames ?? [], { reset: res.reset }),
+            hasEarlier: cur.hasEarlier,
+            cursor: {
+              start: cur.cursor?.start ?? res.cursor?.start ?? null,
+              end: res.cursor?.end ?? cur.cursor?.end ?? null
+            }
+          };
+        });
+        lastFetchedRef.current = {
+          paneId: selectedPane.id,
+          revision: selectedPane.revision,
+          cursorEnd: res.cursor?.end ?? prev.cursorEnd
+        };
+      }
+    }).finally(() => {
+      if (!cancelled)
+        setFramesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [transport, selectedPane?.id, selectedPane?.revision, selectedPane?.agent]);
+  const handleLoadEarlier = import_react4.useCallback(async (beforeCursor) => {
+    if (!selectedPane || !beforeCursor)
+      return;
+    setFramesLoading(true);
+    try {
+      const res = await transport.getFrames(selectedPane.id, { before: beforeCursor });
+      if (res?.ok) {
+        setFramesData((cur) => {
+          if (!cur)
+            return res;
+          return {
+            ...cur,
+            frames: mergeFrames(cur.frames ?? [], res.frames ?? [], { prepend: true }),
+            hasEarlier: res.hasEarlier,
+            cursor: {
+              start: res.cursor?.start ?? cur.cursor?.start ?? null,
+              end: cur.cursor?.end ?? res.cursor?.end ?? null
+            }
+          };
+        });
+      }
+    } finally {
+      setFramesLoading(false);
+    }
+  }, [transport, selectedPane]);
+  const screenNeeded = Boolean(selectedPane && (activeTab === "screen" || selectedPane.status === "blocked"));
+  const refreshScreen = import_react4.useCallback(async () => {
+    if (!selectedPane)
+      return;
+    setScreenLoading(true);
+    try {
+      const res = await transport.getScreen(selectedPane.id);
+      setScreenData(res);
+    } finally {
+      setScreenLoading(false);
+    }
+  }, [transport, selectedPane]);
+  import_react4.useEffect(() => {
+    if (!screenNeeded || !selectedPane) {
+      setScreenData(null);
+      return;
+    }
+    let cancelled = false;
+    setScreenLoading(true);
+    transport.getScreen(selectedPane.id).then((res) => {
+      if (!cancelled)
+        setScreenData(res);
+    }).finally(() => {
+      if (!cancelled)
+        setScreenLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [transport, screenNeeded, selectedPane?.id, selectedPane?.revision]);
+  import_react4.useEffect(() => {
+    function onKeyDown(e) {
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable)
+        return;
+      if (e.metaKey || e.ctrlKey || e.altKey)
+        return;
+      if (e.key === "/") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (e.key === "j" || e.key === "ArrowDown" || e.key === "k" || e.key === "ArrowUp") {
+        const agents = orderedPanes.filter((p) => p.agent !== null);
+        if (agents.length === 0)
+          return;
+        e.preventDefault();
+        const idx = agents.findIndex((p) => p.id === selectedId);
+        const dir = e.key === "j" || e.key === "ArrowDown" ? 1 : -1;
+        const nextIdx = idx < 0 ? 0 : (idx + dir + agents.length) % agents.length;
+        setSelectedId(agents[nextIdx].id);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [orderedPanes, selectedId]);
+  const handleAct = import_react4.useCallback((req) => transport.act(req), [transport]);
+  const handleHandoff = import_react4.useCallback((pane, frames) => {
+    const contextText = formatHandoffContext(pane, frames);
+    if (typeof onHandoffContinue === "function") {
+      onHandoffContinue(pane, contextText);
+    } else {
+      globalThis.navigator?.clipboard?.writeText(contextText);
+    }
+  }, [onHandoffContinue]);
+  const health = state?.health;
+  const counts = state?.counts;
+  const isOfflineNeverConnected = state && !health?.connected && !state.stale;
+  const isStale = state && !health?.connected && state.stale;
+  const isUnsupportedProtocol = state && state.protocol !== 1;
+  const isEmpty = state && health?.connected && (counts?.agents ?? 0) === 0;
+  const isCalm = state && health?.connected && (counts?.agents ?? 0) > 0 && counts.blocked === 0 && counts.working === 0 && counts.done === 0;
+  return /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+    className: "dsh-fleet-root",
+    "data-dsh-fleet-control-room": "",
+    children: [
+      /* @__PURE__ */ jsx_runtime4.jsxs("header", {
+        className: "dsh-fleet-topbar",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+            className: "dsh-fleet-topbar-left",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                className: "dsh-fleet-brand",
+                children: "Fleet 控制室"
+              }),
+              state?.machine?.label && /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                className: "dsh-fleet-pill",
+                children: state.machine.label
+              }),
+              counts && /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+                className: "dsh-fleet-stat-strip dsh-fleet-num",
+                children: [
+                  counts.blocked > 0 && /* @__PURE__ */ jsx_runtime4.jsxs("span", {
+                    className: "dsh-fleet-stat-item",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                        className: "dsh-fleet-dot dsh-fleet-dot--blocked"
+                      }),
+                      " ",
+                      counts.blocked,
+                      " 等你"
+                    ]
+                  }),
+                  counts.working > 0 && /* @__PURE__ */ jsx_runtime4.jsxs("span", {
+                    className: "dsh-fleet-stat-item",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                        className: "dsh-fleet-dot dsh-fleet-dot--working"
+                      }),
+                      " ",
+                      counts.working,
+                      " 运行"
+                    ]
+                  }),
+                  counts.done > 0 && /* @__PURE__ */ jsx_runtime4.jsxs("span", {
+                    className: "dsh-fleet-stat-item",
+                    children: [
+                      /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                        className: "dsh-fleet-dot dsh-fleet-dot--done"
+                      }),
+                      " ",
+                      counts.done,
+                      " 完成"
+                    ]
+                  }),
+                  isCalm && /* @__PURE__ */ jsx_runtime4.jsx("span", {
+                    className: "dsh-fleet-pill dsh-fleet-pill--passed",
+                    children: "全部处理完毕"
+                  })
+                ]
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+            className: "dsh-fleet-topbar-right",
+            children: [
+              /* @__PURE__ */ jsx_runtime4.jsx("button", {
+                type: "button",
+                className: "dsh-fleet-btn dsh-fleet-btn--sm",
+                onClick: jumpNextAttention,
+                title: "跳到下一个需要你处理的 Agent (⌘⌥A)",
+                children: "下一个待处理 ⌘⌥A"
+              }),
+              !externalTransport && /* @__PURE__ */ jsx_runtime4.jsxs("select", {
+                className: "dsh-fleet-select",
+                value: mode,
+                onChange: (e) => setMode(e.target.value),
+                "aria-label": "数据源切换",
+                title: "切换实时连接或 Fixture 场景",
+                children: [
+                  /* @__PURE__ */ jsx_runtime4.jsx("option", {
+                    value: "live",
+                    children: "Live (/plugin/fleet)"
+                  }),
+                  SCENARIO_NAMES.map((name) => /* @__PURE__ */ jsx_runtime4.jsxs("option", {
+                    value: name,
+                    children: [
+                      "Fixture: ",
+                      name
+                    ]
+                  }, name))
+                ]
+              })
+            ]
+          })
+        ]
+      }),
+      isUnsupportedProtocol && /* @__PURE__ */ jsx_runtime4.jsx("div", {
+        className: "dsh-fleet-banner dsh-fleet-banner--error",
+        role: "alert",
+        children: /* @__PURE__ */ jsx_runtime4.jsxs("span", {
+          children: [
+            "不支持的 Fleet 协议版本（protocol=",
+            String(state.protocol),
+            "），请升级客户端。"
+          ]
+        })
+      }),
+      isStale && /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: "dsh-fleet-banner dsh-fleet-banner--warn",
+        role: "status",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsxs("span", {
+            children: [
+              "herdr 已断开（已断开 ",
+              health?.lastOkAt ? formatElapsed(now - health.lastOkAt) : "—",
+              "）· 当前展示最后已知状态，所有面板只读。",
+              health?.error ? ` 原因：${health.error}` : ""
+            ]
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsx("button", {
+            type: "button",
+            className: "dsh-fleet-btn dsh-fleet-btn--sm",
+            onClick: () => transport.reconnect?.(),
+            children: "重新连接"
+          })
+        ]
+      }),
+      isOfflineNeverConnected ? /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: "dsh-fleet-empty",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsx("strong", {
+            children: "herdr 未连接"
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsx("span", {
+            children: health?.error || "未能连接到 herdr socket，请先启动 herdr 后重试。"
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsx("button", {
+            type: "button",
+            className: "dsh-fleet-btn dsh-fleet-btn--primary",
+            onClick: () => transport.reconnect?.(),
+            children: "重新连接"
+          })
+        ]
+      }) : isEmpty ? /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: "dsh-fleet-empty",
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsx("strong", {
+            children: "还没有运行中的 Agent Bot"
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsxs("span", {
+            children: [
+              "herdr 已连接，当前仅有 ",
+              counts?.shells ?? 0,
+              " 个普通终端面板。启动任意 Agent 后会自动出现在这里。"
+            ]
+          })
+        ]
+      }) : /* @__PURE__ */ jsx_runtime4.jsxs("div", {
+        className: `dsh-fleet-body ${inspectorOpen && selectedPane ? "" : "dsh-fleet-body--no-inspector"}`,
+        children: [
+          /* @__PURE__ */ jsx_runtime4.jsx(Roster, {
+            state,
+            now,
+            seen,
+            selectedId,
+            onSelect: setSelectedId,
+            searchInputRef
+          }),
+          /* @__PURE__ */ jsx_runtime4.jsx(Stage, {
+            pane: selectedPane,
+            now,
+            seen,
+            activeTab,
+            onTabChange: setActiveTab,
+            framesData,
+            framesLoading,
+            onLoadEarlier: handleLoadEarlier,
+            screenData,
+            screenLoading,
+            onRefreshScreen: refreshScreen,
+            onAct: handleAct,
+            onHandoffContinue: handleHandoff,
+            inspectorOpen,
+            onToggleInspector: () => setInspectorOpen((v) => !v)
+          }),
+          inspectorOpen && selectedPane && /* @__PURE__ */ jsx_runtime4.jsx(Inspector, {
+            pane: selectedPane,
+            now,
+            onAct: handleAct,
+            onClose: () => setInspectorOpen(false)
+          })
+        ]
+      })
+    ]
+  });
+}
+
+// src/main.js
 var legacy = createLegacyPlugin();
 var inject = legacy.inject;
+var FLEET_TAB_ID = "@local/dsh-threads/fleet";
+var FLEET_ADDRESS = "dsh-resource://fleet/control-room";
+function createJumpBus() {
+  let seq = 0;
+  const listeners = new Set;
+  return {
+    trigger() {
+      seq += 1;
+      for (const listener of listeners) {
+        try {
+          listener(seq);
+        } catch {}
+      }
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    current() {
+      return seq;
+    }
+  };
+}
+function registerFleet(ctx) {
+  const jumpBus = createJumpBus();
+  const openFleet = (scope) => {
+    try {
+      scope?.sidebarRight?.openResource?.(FLEET_ADDRESS, { revealIfOpened: true });
+    } catch {}
+  };
+  const handoffContinue = (scope) => async (pane, contextText) => {
+    try {
+      const id = await scope?.sessions?.create?.({ cwd: pane.cwd });
+      if (typeof id === "string" && id.length > 0) {
+        if (scope?.conversation?.input?.for && scope?.sessions?.using) {
+          await scope.sessions.using(id, { source: "paneChat" }, (reference) => {
+            scope.conversation.input.for(reference.binding.ctx).setDraft(contextText);
+          }).catch(() => {});
+        }
+        scope?.sidebarRight?.openResource?.(`dsh-resource://panechat/session/${id}`, { revealIfOpened: true });
+        return;
+      }
+    } catch {}
+    try {
+      await globalThis.navigator?.clipboard?.writeText(contextText);
+    } catch {}
+  };
+  ctx.inject(["sidebarRightTabs", "sidebarRight", "slots"], (scope) => {
+    scope.effect(() => scope.sidebarRightTabs.register({
+      id: FLEET_TAB_ID,
+      kind: "fleet",
+      patterns: ["dsh-resource://fleet/**"],
+      priority: "extension",
+      canOpen: (addr) => typeof addr === "string" && addr.startsWith("dsh-resource://fleet/"),
+      title: () => "Fleet 控制室",
+      guide: [{
+        id: "fleet-control-room",
+        order: 5,
+        title: () => "Fleet 控制室",
+        description: () => "多 Agent 舰队面板：状态总览、审批快通、实时屏幕与门禁",
+        run: () => openFleet(scope)
+      }]
+    }), "fleet: register tab definition");
+    function FleetTabBody() {
+      const [jumpSignal, setJumpSignal] = import_react5.useState(() => jumpBus.current());
+      import_react5.useEffect(() => jumpBus.subscribe(setJumpSignal), []);
+      return import_react5.default.createElement(FleetView, {
+        jumpSignal,
+        onHandoffContinue: handoffContinue(scope)
+      });
+    }
+    function FleetTabTitle() {
+      return import_react5.default.createElement("span", { "data-dsh-fleet-tab-title": "" }, "Fleet 控制室");
+    }
+    scope.effect(() => scope.slots.inject("sidebar.right.pane.tab", () => scope.slots.register({
+      name: "sidebar.right.pane.tab",
+      key: FLEET_TAB_ID
+    }, FleetTabBody)), "fleet: register tab body");
+    scope.effect(() => scope.slots.inject("sidebar.right.pane.tab.title", () => scope.slots.register({
+      name: "sidebar.right.pane.tab.title",
+      key: FLEET_TAB_ID
+    }, FleetTabTitle)), "fleet: register tab title");
+  });
+  ctx.inject(["commandUi", "sidebarRight"], (scope) => {
+    scope.effect(() => scope.commandUi.register({
+      name: "fleet",
+      label: () => "Fleet 控制室",
+      description: () => "打开多 Agent 舰队控制室",
+      available: () => true,
+      ui: {
+        kind: "action",
+        run: () => openFleet(scope)
+      }
+    }), "fleet: register /fleet command");
+  });
+  ctx.inject(["shortcuts", "sidebarRight"], (scope) => {
+    scope.effect(() => {
+      const shortcuts = scope.shortcuts;
+      const binding = { code: "KeyA", modifiers: ["primary", "alt"] };
+      const { issue, conflicts } = shortcuts.describeBinding?.(binding) ?? { issue: null, conflicts: [] };
+      if (issue !== null || Array.isArray(conflicts) && conflicts.length > 0)
+        return;
+      const defaults = {
+        "desktop:macos": binding,
+        "desktop:windows": binding,
+        "desktop:linux": binding,
+        "web:macos": binding,
+        "web:windows": binding
+      };
+      return shortcuts.register({
+        id: "fleet.attention",
+        label: () => "Fleet：跳到下一个待处理 Agent",
+        aliases: ["fleet attention", "next blocked agent"],
+        defaults,
+        regions: ["page", "editable", "terminal"],
+        modals: [],
+        resolve: () => ({
+          status: "handled",
+          run: () => {
+            openFleet(scope);
+            jumpBus.trigger();
+          }
+        })
+      });
+    }, "fleet: register attention jump shortcut");
+  });
+}
 function apply(ctx, config) {
-  return legacy.apply(ctx, config);
+  const result = legacy.apply(ctx, config);
+  try {
+    registerFleet(ctx, config);
+  } catch (error) {
+    console.error("[dsh-fleet] failed to initialize Fleet UI:", error);
+  }
+  return result;
 }
 // Plain data properties, exactly what the pre-bundler factory returned (not bun's __esModule/getter object).
 return Object.assign({},module.exports)}});

@@ -28,9 +28,23 @@ describe('legacy registration manifest', () => {
       code = result.code
     })
 
-    it('registers exactly what the original client.js registered (same calls, same order, same CSS)', async () => {
+    it('registers everything the original client.js registered in exact order, plus Fleet registrations', async () => {
       const manifest = JSON.parse(JSON.stringify(await recordManifest(code, { fileName: 'build' })))
-      assert.deepStrictEqual(manifest, golden.manifest)
+      assert.equal(manifest.id, golden.manifest.id)
+      assert.deepStrictEqual(manifest.exports, golden.manifest.exports)
+      assert.deepStrictEqual(manifest.inject, golden.manifest.inject)
+      for (const req of golden.manifest.requires) {
+        assert.ok(manifest.requires.includes(req), `missing legacy require: ${req}`)
+      }
+      assert.deepStrictEqual(
+        manifest.calls.slice(0, golden.manifest.calls.length),
+        golden.manifest.calls,
+        'legacy registrations must remain verbatim as the exact prefix',
+      )
+      const fleetCalls = manifest.calls.slice(golden.manifest.calls.length)
+      assert.ok(fleetCalls.some((c) => c.call === 'ctx.sidebarRightTabs.register'), 'Fleet tab registered')
+      assert.ok(fleetCalls.some((c) => c.call === 'ctx.commandUi.register'), 'Fleet command registered')
+      assert.ok(fleetCalls.some((c) => c.call === 'ctx.shortcuts.register'), 'Fleet shortcut registered')
     })
   })
 })
